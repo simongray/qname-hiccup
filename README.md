@@ -8,10 +8,10 @@ care about an alias once, and its names come out as keywords under that
 alias, whatever prefix the document wrote.
 
 - **Your aliases, not the document's.** With the alias `:dc` for Dublin
-  Core, `<dc:creator>` and `<dublin:creator>` both come out as
-  `:dc/creator`.
-- **Back to XML.** Namespaces you didn't name keep the document's prefix,
-  and the writer declares them again.
+  Core, `<dc:creator>`, `<dublin:creator>`, and `<creator>` where Dublin
+  Core is the default namespace, all come out as `:dc/creator`.
+- **Back to XML.** Namespaces you didn't name keep the document's prefix
+  or stay where they were declared, and the writer declares them again.
 - **Safe on untrusted input.** On the JVM, DTDs and external entities
   are off, so XXE and entity expansion attacks don't work. On every
   platform, nesting has a depth limit.
@@ -79,6 +79,11 @@ prefix, and the tree's metadata records its URI:
 ;; => {:shelf "https://example.org/shelf"}
 ```
 
+A default namespace works the same way: element names without a prefix
+come out under its alias. If the table lacks it, the names stay plain,
+and its declaration stays on its element as the attribute `:xmlns`, so
+that it's written back where it was.
+
 The metadata also holds a report of what the parse found, e.g. that
 unknown namespace, or a prefix that no declaration names, which
 `xml/report` gives.
@@ -132,8 +137,6 @@ everything else:
 - CDATA becomes text, joined to the text around it.
 - Text of only white space is dropped, except a space between two
   elements on one line, which inline markup needs.
-- A default namespace isn't kept. Names without a prefix are plain
-  keywords, and `xml/emit` doesn't declare it again.
 
 A document that isn't well-formed throws an ex-info with the `:type`
 `:dk.simongray.qname-hiccup/malformed`, and so does one that nests deeper

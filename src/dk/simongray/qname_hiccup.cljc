@@ -3,9 +3,9 @@
 
   Raw Hiccup has the names as written. Canonical Hiccup has keywords
   namespaced by the alias that a table gives the URI, e.g. :dc/creator,
-  while names without a prefix stay plain keywords. Its metadata has what
-  the resolution found under :xml/report, and the namespaces that the
-  table lacks under :xml/namespaces."
+  whether the name has a prefix or is in the default namespace. Its
+  metadata has what the resolution found under :xml/report, and the
+  namespaces that the table lacks under :xml/namespaces."
   (:require [clojure.string :as str])
   #?(:clj (:import [java.io InputStream Reader StringReader]
                    [javax.xml.stream XMLInputFactory XMLStreamConstants
@@ -410,17 +410,38 @@
         [(keyword prefix local)
          {:id :xml/undeclared-prefix :level :warning :prefix prefix}]))))
 
+;; Namespaces in XML 1.0, section 6.2: the default namespace applies to
+;; element names without a prefix, and not to attribute names
+(defn- resolve-tag
+  "The raw element name `s` resolved in `scope` to a keyword, paired with a
+  problem or nil. Without a prefix, it takes the alias of the default
+  namespace, which `scope` has under nil."
+  [scope s]
+  (let [[_ alias] (get scope nil)]
+    (if (and alias (not (str/includes? s ":")))
+      [(keyword (name alias) s) nil]
+      (resolve-name scope s))))
+
 (defn- resolve-attrs
-  "The `attrs` with their names resolved in `scope` and without the xmlns
-  declarations, paired with `problems` and those that the names add."
+  "The `attrs` with their names resolved in `scope`, paired with `problems`
+  and those that the names add. The xmlns declarations go, but a default
+  namespace without an alias stays as the attribute :xmlns."
   [scope problems attrs]
-  (reduce-kv (fn [[m problems] k v]
-               (if (or (= k "xmlns") (str/starts-with? k "xmlns:"))
-                 [m problems]
-                 (let [[k' problem] (resolve-name scope k)]
-                   [(assoc m k' v) (cond-> problems problem (conj problem))])))
-             [{} problems]
-             attrs))
+  (let [[_ default-alias] (get scope nil)]
+    (reduce-kv (fn [[m problems] k v]
+                 (cond
+                   (= k "xmlns")
+                   [(cond-> m (nil? default-alias) (assoc :xmlns v)) problems]
+
+                   (str/starts-with? k "xmlns:")
+                   [m problems]
+
+                   :else
+                   (let [[k' problem] (resolve-name scope k)]
+                     [(assoc m k' v)
+                      (cond-> problems problem (conj problem))])))
+               [{} problems]
+               attrs)))
 
 ;; Namespaces in XML 1.0, section 6.1
 (defn- resolve-element
@@ -431,15 +452,16 @@
         ;; the alias of a declared URI is looked up once, where it's
         ;; declared, not again for every name that uses it
         alias-of             (fn [[prefix uri]]
-                               (when prefix
-                                 [prefix [uri (uri->alias uri)]]))
-        scope                (into scope (keep alias-of) decls)
+                               [prefix [uri (uri->alias uri)]])
+        scope                (into scope (map alias-of) decls)
+        default              (get decls nil)
         problems             (cond-> problems
-                               (contains? decls nil)
+                               (and (seq default)
+                                    (nil? (second (get scope nil))))
                                (conj {:id    :xml/default-namespace
                                       :level :info
-                                      :uri   (get decls nil)}))
-        [tag' problem]       (resolve-name scope tag)
+                                      :uri   default}))
+        [tag' problem]       (resolve-tag scope tag)
         problems             (cond-> problems problem (conj problem))
         [attrs' problems]    (resolve-attrs scope problems attrs)
         resolve-child        (fn [[acc problems] child]
@@ -455,6 +477,10 @@
 (defn resolve-namespaces
   "The raw Hiccup `tree` as canonical Hiccup, with names namespaced by the
   aliases that `uri->alias` gives their URIs, and no xmlns declarations.
+
+  An element name without a prefix is in the default namespace, if any.
+  When `uri->alias` lacks that namespace, the names in it stay plain, and
+  its declaration stays as the attribute :xmlns.
 
   The metadata has the problems under :xml/report, and under
   :xml/namespaces the URIs by prefix of the namespaces that `uri->alias`

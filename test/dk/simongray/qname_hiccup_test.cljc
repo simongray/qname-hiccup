@@ -48,9 +48,9 @@
 
 (deftest namespace-resolution
   (let [tree (xml/parse sample {itunes :itunes})]
-    (is (= [:rss {:version "2.0"}] (subvec tree 0 2)))
+    (is (= [:rss {:version "2.0" :xmlns "http://www.w3.org/2005/Atom"}] (subvec tree 0 2)))
     (is (= [:itunes/author {} "A"] (-> tree (nth 2) (nth 3))) "by the alias of the table")
-    (testing "unprefixed elements stay plain keywords, whatever the default namespace"
+    (testing "in a default namespace that the table lacks, names stay plain keywords"
       (is (= [:title {} "T & U"] (-> tree (nth 2) (nth 2)))))
     (testing "unknown URIs keep their prefix as alias"
       (is (= [:acme/thing {:acme/mode "on"}] (-> tree (nth 2) (nth 4)))))
@@ -62,6 +62,43 @@
     (let [tree (xml/parse sample)]
       (is (= [:itunes/author {} "A"] (-> tree (nth 2) (nth 3))))
       (is (= {:itunes itunes :acme "https://acme.example"} (xml/namespaces tree))))))
+
+(def atom-ns
+  "The namespace of Atom, which the tests of default namespaces use."
+  "http://www.w3.org/2005/Atom")
+
+(deftest default-namespaces
+  (testing "an element name without a prefix takes its alias, an attribute name doesn't"
+    (is (= [:atom/feed {:xml/lang "en"} [:atom/title {:type "text"} "T"]]
+           (xml/parse (str "<feed xmlns=\"" atom-ns "\" xml:lang=\"en\">"
+                           "<title type=\"text\">T</title></feed>")
+                      {atom-ns :atom}))))
+  (testing "so a prefix and the default namespace give the same names"
+    (is (= (xml/parse (str "<a:feed xmlns:a=\"" atom-ns "\"><a:title>T</a:title></a:feed>")
+                      {atom-ns :atom})
+           (xml/parse (str "<feed xmlns=\"" atom-ns "\"><title>T</title></feed>")
+                      {atom-ns :atom}))))
+  (testing "one declared on a child applies there only"
+    (is (= [:rss {} [:atom/link {:href "x"}] [:link {} "y"]]
+           (xml/parse (str "<rss><link xmlns=\"" atom-ns "\" href=\"x\"/><link>y</link></rss>")
+                      {atom-ns :atom}))))
+  (testing "an empty one ends it, and stays"
+    (is (= [:atom/feed {} [:entry {:xmlns ""}]]
+           (xml/parse (str "<feed xmlns=\"" atom-ns "\"><entry xmlns=\"\"/></feed>")
+                      {atom-ns :atom}))))
+  (testing "one that the table lacks stays on its element, and is written back"
+    (let [tree (xml/parse (str "<rss><channel><site xmlns=\"com-wordpress:feed-additions:1\">"
+                               "123</site></channel></rss>"))]
+      (is (= [:site {:xmlns "com-wordpress:feed-additions:1"} "123"] (-> tree (nth 2) (nth 2))))
+      (is (= [{:id :xml/default-namespace :level :info :uri "com-wordpress:feed-additions:1"}]
+             (xml/report tree)))
+      (is (= tree (xml/parse (xml/emit tree))))))
+  (testing "a known one is written back under its alias"
+    (let [tree (xml/parse (str "<feed xmlns=\"" atom-ns "\"><title>T</title></feed>")
+                          {atom-ns :atom})
+          out  (xml/emit tree {:atom atom-ns})]
+      (is (re-find #"<atom:feed xmlns:atom=" out))
+      (is (= tree (xml/parse out {atom-ns :atom}))))))
 
 #?(:clj
    (deftest undeclared-prefixes-survive-on-the-jvm
@@ -95,11 +132,11 @@
   (is (= "a b" (xml/trim "a b"))))
 
 (deftest emitting
-  (testing "declarations for the aliases used, foreign ones included"
+  (testing "declarations for the aliases used, foreign ones included, and the default namespace"
     (let [out (xml/emit (xml/parse sample))]
       (is (re-find #"xmlns:acme=\"https://acme.example\"" out))
       (is (re-find #"xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\"" out))
-      (is (not (re-find #"xmlns=\"" out)))))
+      (is (re-find #"xmlns=\"http://www.w3.org/2005/Atom\"" out))))
   (testing "escaping and CDATA"
     (is (re-find #"<title>T &amp; U</title>" (xml/emit [:rss {} [:title {} "T & U"]])))
     (is (re-find #"<!\[CDATA\[<p>Hi</p>\]\]>" (xml/emit [:rss {} [:d {} "<p>Hi</p>"]])))
