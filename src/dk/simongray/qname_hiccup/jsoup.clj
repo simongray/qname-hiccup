@@ -1,14 +1,10 @@
 (ns dk.simongray.qname-hiccup.jsoup
-  "A lenient XML parser for documents that aren't well-formed at all, built
-  on the XML mode of jsoup.
+  "A lenient XML parser for documents that aren't well-formed, built on the
+  XML mode of jsoup.
 
   Unquoted attributes, stray angle brackets in text, and unclosed or
-  mismatched tags all give a tree as good as it gets, rather than an
-  error. Names are kept exactly as written, so the result is the same raw
-  Hiccup that a strict parse gives.
-
-  It runs on the JVM only, and needs org.jsoup/jsoup in your dependencies,
-  which qname-hiccup leaves out."
+  mismatched tags give a tree as good as it gets, rather than an error. It
+  needs org.jsoup/jsoup, which qname-hiccup leaves out."
   (:require [dk.simongray.qname-hiccup :as xml])
   (:import [java.io InputStream]
            [org.jsoup Jsoup]
@@ -21,9 +17,8 @@
              [(.getKey a) (.getValue a)])))
 
 (defn- node->raw
-  "The raw Hiccup of the jsoup `node` at `depth`, which is 1 for the root,
-  with elements and their text only. The depth is checked against the
-  most that a document may nest."
+  "The raw Hiccup of the jsoup `node` at `depth`, 1 for the root, with
+  elements and their text only."
   [^Node node depth]
   (condp instance? node
     TextNode (.getWholeText ^TextNode node)
@@ -47,11 +42,9 @@
     (throw (ex-info "Cannot parse XML from this value" {:type (type xml)}))))
 
 (defn parse-raw
-  "The raw Hiccup of `xml`, a String or an InputStream whose charset jsoup
-  detects, as a strict parse gives it, but read leniently.
-
-  Since jsoup rejects nothing, it throws ::xml/malformed only when the
-  document has no element at all, or nests deeper than xml/max-depth."
+  "The raw Hiccup of `xml`, a string or an InputStream whose charset jsoup
+  detects, with names as written. It throws ::xml/malformed only when the
+  document has no element or nests too deep."
   [xml]
   (if-let [root (first (.children (document xml)))]
     (node->raw root 1)

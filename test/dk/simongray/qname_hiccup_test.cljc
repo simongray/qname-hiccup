@@ -57,11 +57,11 @@
     (is (= #{{:id :xml/default-namespace :level :info :uri "http://www.w3.org/2005/Atom"}
              {:id :xml/unknown-namespace :level :info :prefix "acme" :uri "https://acme.example"}}
            (set (xml/report tree))))
-    (is (= {:acme "https://acme.example"} (xml/foreign-namespaces tree))))
+    (is (= {:acme "https://acme.example"} (xml/namespaces tree))))
   (testing "without a table, every prefix keeps its own alias"
     (let [tree (xml/parse sample)]
       (is (= [:itunes/author {} "A"] (-> tree (nth 2) (nth 3))))
-      (is (= {:itunes itunes :acme "https://acme.example"} (xml/foreign-namespaces tree))))))
+      (is (= {:itunes itunes :acme "https://acme.example"} (xml/namespaces tree))))))
 
 #?(:clj
    (deftest undeclared-prefixes-survive-on-the-jvm
@@ -69,7 +69,7 @@
        (is (= [:foo/bar {:x "1"}] (-> tree (nth 2) (nth 2))))
        (is (= [{:id :xml/undeclared-prefix :level :warning :prefix "foo"}]
               (xml/report tree)))
-       (is (= {:foo nil} (xml/foreign-namespaces tree)) "recorded with no URI")
+       (is (= {:foo nil} (xml/namespaces tree)) "recorded with no URI")
        (is (not (re-find #"foo" (xml/emit tree))) "so that emit leaves it out"))))
 
 (deftest decoding-a-document

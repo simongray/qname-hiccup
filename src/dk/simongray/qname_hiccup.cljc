@@ -27,7 +27,7 @@
   (drop 2 element))
 
 (defn text
-  "The concatenated text content of the Hiccup `element`."
+  "The text directly in the Hiccup `element`, joined."
   [element]
   ;; one string is the common case, and needs no concatenation
   (if (and (vector? element)
@@ -54,9 +54,8 @@
   (apply str (filter string? (tree-seq vector? children element))))
 
 (defn- space-code?
-  "Whether the character with the code `c` is white space to the trim of
-  either platform. The trim of Java keeps the no-break spaces and the byte
-  order mark, which that of JavaScript removes."
+  "Whether the character code `c` is white space to the trim of either
+  platform."
   [^long c]
   ;; a primitive argument, and comparisons of two arguments, which Clojure
   ;; compiles inline, since this runs for the ends of every value that a
@@ -73,9 +72,8 @@
       (== c 0xFEFF)))
 
 (defn trim
-  "The string `s` without the white space at either end, the no-break
-  spaces included, so that a value reads the same on the JVM and in
-  JavaScript. It's `s` itself when there's none."
+  "The string `s` without white space at either end, no-break spaces
+  included, the same on the JVM and in JavaScript."
   [^String s]
   (let [n     (count s)
         start (loop [i 0]
@@ -107,9 +105,8 @@
     acc))
 
 (defn ^:no-doc compact-text
-  "The `nodes` with adjacent strings merged and the blank ones dropped. A
-  space between two elements on one line stays, since inline markup needs
-  it, e.g. between a bold and an italic word."
+  "The `nodes` with adjacent strings merged and blank ones dropped. A space
+  between two elements on one line stays, as inline markup needs it."
   [nodes]
   (loop [nodes (seq nodes) acc (transient []) run nil after-element? false]
     (if nodes
@@ -121,16 +118,14 @@
       (persistent! (kept-run acc run false)))))
 
 (defn- strip-bom
-  "The text `s` without the byte order mark at its front, when one
-  survived decoding."
+  "The text `s` without a leading byte order mark."
   [s]
   (if (str/starts-with? s "\uFEFF")
     (subs s 1)
     s))
 
 (defn- bom-encoding
-  "The encoding that the byte order mark at the start of the bytes `b`
-  names, or nil when there's none."
+  "The encoding that the byte order mark of the bytes `b` names, or nil."
   [b]
   (let [n    #?(:clj (alength ^bytes b) :cljs (.-length b))
         at   (fn [i]
@@ -144,8 +139,7 @@
       (= [0xff 0xfe] (take 2 head)) "UTF-16LE")))
 
 (defn- declared-encoding
-  "The encoding that the XML declaration at the start of the bytes `b`
-  names, or nil."
+  "The encoding that the XML declaration of the bytes `b` names, or nil."
   [b]
   (let [n    (min 200 #?(:clj (alength ^bytes b) :cljs (.-length b)))
         head #?(:clj  (String. ^bytes b 0 (int n) "ISO-8859-1")
@@ -154,13 +148,11 @@
 
 ;; XML 1.0, appendix F; RFC 7303, section 3.2
 (defn decode
-  "The text of the XML document in the bytes `b`, by the encoding that its
-  byte order mark names, or else by `charset`, e.g. that of the
-  Content-Type of a response, or else by its XML declaration, or else as
-  UTF-8.
+  "The text of the XML document in the bytes `b`, in the encoding that its
+  byte order mark, `charset` or XML declaration names first, or else UTF-8.
 
-  An encoding that the platform doesn't know counts as UTF-8, and a byte
-  order mark is left out, as a browser leaves it out."
+  The `charset` is e.g. that of a Content-Type header. An unknown encoding
+  counts as UTF-8, and the byte order mark is dropped."
   ([b]
    (decode b nil))
   ([b charset]
@@ -178,21 +170,21 @@
                         b))))))
 
 (defn ^:no-doc malformed
-  "The error for XML that the parser rejects with `message`, and `cause`,
-  the exception that carried the message, or nil."
+  "The error for malformed XML, with the parser's `message` and the `cause`
+  that carried it, or nil."
   [message cause]
   (ex-info (str "Malformed XML: " message) {:type ::malformed} cause))
 
 ;; Far deeper than documents nest, and shallow enough for every walk of the
 ;; tree to recurse on a thread with a stack of the default size
 (def max-depth
-  "How deep elements may nest in a document that the parsers read, with
-  the root at 1. A document nested deeper is malformed."
+  "How deep elements may nest in a document, with the root at 1. A deeper
+  document is malformed."
   256)
 
 (defn ^:no-doc check-depth
-  "Nil when an element at `depth` nests no deeper than max-depth, or else
-  it throws ::malformed."
+  "Nil, unless an element at `depth` nests too deep, which throws
+  ::malformed."
   [depth]
   (when (> depth max-depth)
     (throw (malformed (str "elements nest deeper than " max-depth " levels")
@@ -200,8 +192,7 @@
 
 #?(:cljs
    (defn- dom-parser
-     "A DOMParser of the platform. Without one, it throws with the :type
-     ::no-parser, since that's no fault of the XML."
+     "A DOMParser of the platform, or a throw of ::no-parser without one."
      []
      (if (exists? js/DOMParser)
        (js/DOMParser.)
@@ -212,12 +203,13 @@
 
 #?(:clj
    (defn- input-factory
-     "A StAX factory with namespace processing off, DTDs and external
-     entities disabled, and no limits of the JDK on the size of a text or
-     the depth of nesting."
+     "A StAX factory without namespace processing, DTDs, external entities
+     or the JDK's limits on text size and depth."
      ^XMLInputFactory []
      (let [factory (XMLInputFactory/newInstance)]
        (doto factory
+         ;; so that undeclared prefixes survive, and the xmlns declarations
+         ;; arrive as plain attributes
          (.setProperty XMLInputFactory/IS_NAMESPACE_AWARE false)
          (.setProperty XMLInputFactory/IS_COALESCING true)
          (.setProperty XMLInputFactory/SUPPORT_DTD false)
@@ -236,19 +228,11 @@
        factory)))
 
 (defn- document
-  "The document in `xml`, ready to read.
+  "The document in `xml`, ready to read: a StAX reader at its start on the
+  JVM, and the root element of a DOM in JavaScript.
 
-  On the JVM, `xml` is a string, an InputStream or a Reader. The result is
-  a StAX reader at its start, from a factory with namespace processing
-  off, so that undeclared prefixes survive and xmlns declarations arrive
-  as plain attributes. DTDs and external entities are disabled.
-
-  In JavaScript, `xml` is a string, and the result is the root element of
-  the DOM that the DOMParser of the platform builds. That's the one of the
-  browser, or one that a host such as Node has installed as js/DOMParser,
-  and without one it throws with the :type ::no-parser. Browsers report
-  errors as a parsererror element, and other implementations throw or
-  give a document without a root."
+  On the JVM, `xml` is a string, an InputStream or a Reader, and in
+  JavaScript a string."
   [xml]
   #?(:clj
      (let [factory (input-factory)]
@@ -274,6 +258,8 @@
                       (throw (malformed (or (ex-message e) (str e)) e))))
            errors (.getElementsByTagName doc "parsererror")
            root   (.-documentElement doc)]
+       ;; browsers report errors as a parsererror element, and other
+       ;; implementations throw or give a document without a root
        (cond
          (pos? (.-length errors))
          (throw (malformed (.-textContent (.item errors 0)) nil))
@@ -285,13 +271,13 @@
          root))))
 
 (defn- start-tag
-  "The name and the attributes of the element at `x`, as a pair.
+  "The name and attributes of the element at `source`, as written, in a
+  pair. The namespace declarations are among the attributes.
 
-  Both are as the document writes them, with the namespace declarations
-  among the attributes. On the JVM, `x` is a StAX reader on the start tag
-  of the element, and in JavaScript a DOM element."
-  [x]
-  #?(:clj  (let [^XMLStreamReader r x
+  On the JVM, `source` is a StAX reader on its start tag, and in JavaScript
+  a DOM element."
+  [source]
+  #?(:clj  (let [^XMLStreamReader r source
                  qname (fn [prefix local]
                          (if (str/blank? prefix) local (str prefix ":" local)))]
              [(qname (.getPrefix r) (.getLocalName r))
@@ -303,8 +289,8 @@
                   (into (for [i (range (.getNamespaceCount r))]
                           [(qname "xmlns" (.getNamespacePrefix r i))
                            (.getNamespaceURI r (int i))])))])
-     :cljs (let [attrs (.-attributes x)]
-             [(.-nodeName x)
+     :cljs (let [attrs (.-attributes source)]
+             [(.-nodeName source)
               (into {} (for [i (range (.-length attrs))
                              :let [a (.item attrs i)]]
                          [(.-nodeName a) (.-nodeValue a)]))])))
@@ -312,13 +298,10 @@
 (declare read-element)
 
 (defn- read-children
-  "The raw children of the element at `x`, its elements and its text, which
-  nest at `depth`.
-
-  They are read from the StAX reader up to the element's end tag on the
-  JVM, and from the child nodes of the DOM element in JavaScript."
-  [x depth]
-  #?(:clj  (let [^XMLStreamReader r x]
+  "The raw elements and text in the element at `source`, which nest at
+  `depth`. On the JVM, this reads the StAX reader up to the end tag."
+  [source depth]
+  #?(:clj  (let [^XMLStreamReader r source]
              (loop [acc (transient [])]
                (let [event (.next r)]
                  (cond
@@ -335,7 +318,7 @@
 
                    :else
                    (recur acc)))))
-     :cljs (let [nodes (.-childNodes x)]
+     :cljs (let [nodes (.-childNodes source)]
              (keep (fn [i]
                      (let [node (.item nodes i)]
                        (case (.-nodeType node)
@@ -345,30 +328,25 @@
                    (range (.-length nodes))))))
 
 (defn- read-element
-  "The raw Hiccup of the element at `x` and its subtree, where `depth` is
-  how deep the element nests, 1 for the root.
+  "The raw Hiccup of the element at `source`, which nests at `depth`, 1 for
+  the root.
 
-  On the JVM, `x` is a StAX reader on the start tag of the element, and in
-  JavaScript a DOM element."
-  [x depth]
+  On the JVM, `source` is a StAX reader on its start tag, and in JavaScript
+  a DOM element."
+  [source depth]
   (check-depth depth)
-  (let [head (start-tag x)]
+  (let [head (start-tag source)]
     ;; the start tag first: on the JVM, reading the children moves past it
-    (into head (compact-text (read-children x (inc depth))))))
+    (into head (compact-text (read-children source (inc depth))))))
 
 (defn parse-raw
-  "The raw Hiccup of `xml`, with the names as written and the declarations
-  kept as attributes. Comments and processing instructions are dropped,
-  adjacent text and CDATA merged, and text of only white space removed.
+  "The raw Hiccup of the string `xml`, with names as written and the
+  namespace declarations as attributes.
 
-  The `xml` is a string. On the JVM, it can also be a Reader, or an
-  InputStream, which lets the parser honour the encoding declaration of
-  the document. These throw an ex-info of the type ::malformed:
-
-  - a document that the parser rejects
-  - an XML declaration that it can't read
-  - markup or text after the root element
-  - elements nested deeper than max-depth"
+  On the JVM, `xml` can also be a Reader, or an InputStream whose declared
+  encoding is honoured. Comments and processing instructions are dropped,
+  text and CDATA merged, and text of only white space removed. A document
+  that isn't well-formed or nests too deep throws ::malformed."
   [xml]
   #?(:clj
      (try
@@ -391,8 +369,8 @@
      (read-element (document xml) 1)))
 
 (defn- split-qname
-  "The raw XML name `s` as a pair of its prefix, or nil when it has none,
-  and its local name."
+  "The raw XML name `s` as a pair of its prefix, or nil, and its local
+  name."
   [s]
   (if-let [i (str/index-of s ":")]
     [(subs s 0 i) (subs s (inc i))]
@@ -409,12 +387,11 @@
         attrs))
 
 (defn- resolve-name
-  "The raw name `s` resolved in `scope`, as a pair of the keyword and a
-  problem. The `scope` maps each prefix to a pair of its URI and alias.
+  "The raw name `s` resolved in `scope` to a keyword, paired with a problem
+  or nil. The `scope` maps each prefix to its URI and alias.
 
-  The problem is nil unless the prefix was undeclared or its URI unknown.
-  An unknown URI keeps the prefix as its alias, and the problem has the
-  URI, so that it can be declared again when the tree is written."
+  A prefix that's undeclared, or whose URI is unknown, is its own alias,
+  and the problem says so."
   [scope s]
   (let [[prefix local] (split-qname s)]
     (cond
@@ -434,9 +411,8 @@
          {:id :xml/undeclared-prefix :level :warning :prefix prefix}]))))
 
 (defn- resolve-attrs
-  "The attribute names in `attrs` resolved in `scope`, without the xmlns
-  declarations, and the `problems` so far with those that the names add,
-  as a pair."
+  "The `attrs` with their names resolved in `scope` and without the xmlns
+  declarations, paired with `problems` and those that the names add."
   [scope problems attrs]
   (reduce-kv (fn [[m problems] k v]
                (if (or (= k "xmlns") (str/starts-with? k "xmlns:"))
@@ -448,9 +424,8 @@
 
 ;; Namespaces in XML 1.0, section 6.1
 (defn- resolve-element
-  "The `element` resolved in `scope` by `uri->alias`, and the `problems`
-  so far with those that it adds, as a pair. The `scope` maps each prefix
-  to a pair of its URI and alias."
+  "The `element` resolved in `scope` by `uri->alias`, paired with
+  `problems` and those that it adds."
   [uri->alias scope problems [tag attrs & children :as element]]
   (let [decls                (declarations attrs)
         ;; the alias of a declared URI is looked up once, where it's
@@ -478,14 +453,12 @@
     [(into [tag' attrs'] children') problems]))
 
 (defn resolve-namespaces
-  "The raw Hiccup `tree` as canonical Hiccup, with the `uri->alias` map
-  from namespace URIs to alias keywords. Tags and attributes are keywords
-  namespaced by alias, and the xmlns declarations are removed.
+  "The raw Hiccup `tree` as canonical Hiccup, with names namespaced by the
+  aliases that `uri->alias` gives their URIs, and no xmlns declarations.
 
-  The metadata of the result has the problems under :xml/report. Under
-  :xml/namespaces, it has the URIs of the namespaces that the lookup
-  didn't know, and nil for the prefixes that no declaration named, whose
-  elements are left out when the tree is written."
+  The metadata has the problems under :xml/report, and under
+  :xml/namespaces the URIs by prefix of the namespaces that `uri->alias`
+  lacks. A prefix that no declaration names has nil."
   [tree uri->alias]
   (let [[tree' problems] (resolve-element uri->alias {} [] tree)
         problems         (distinct problems)
@@ -500,25 +473,22 @@
 
 (defn parse
   "The canonical Hiccup of `xml`, with the namespaces resolved by
-  `uri->alias`, none by default."
+  `uri->alias`, an empty map by default."
   ([xml]
    (parse xml {}))
   ([xml uri->alias]
    (resolve-namespaces (parse-raw xml) uri->alias)))
 
 (defn report
-  "The problems recorded while resolving the namespaces of `tree`, as
-  diagnostics of an :id, a :level and details."
+  "The problems found in resolving the namespaces of `tree`, as maps of an
+  :id, a :level and details."
   [tree]
   (:xml/report (meta tree)))
 
-(defn foreign-namespaces
-  "The URIs of the namespaces that `tree` carries in its metadata, by alias,
-  to declare when the tree is written.
-
-  For a parse, they're the namespaces that its table didn't know, by the
-  prefix that the document used, and a prefix that no declaration named
-  has nil."
+(defn namespaces
+  "The URIs by alias of the namespaces that `tree` carries in its metadata,
+  e.g. those that its parse didn't know. A prefix that no declaration
+  named has nil."
   [tree]
   (:xml/namespaces (meta tree)))
 
@@ -547,21 +517,20 @@
             (recur (inc i))))))))
 
 (defn- legal
-  "The string `s` without the characters that XML 1.0 forbids anywhere, or
-  `s` itself, uncopied, when it has none."
+  "The string `s` without the characters that XML 1.0 forbids."
   [s]
   (if (legal? s)
     s
     (str/replace s illegal-characters "")))
 
 (defn ^:no-doc plain?
-  "Whether the string `s` goes into a text node as it is, or with `attr?`
-  into an attribute value: nothing in it that XML 1.0 forbids, and
-  nothing to escape."
-  [^String s attr?]
+  "Whether the string `s` can be written as it is in the `context` of :text
+  or :attr, with nothing that XML 1.0 forbids and nothing to escape."
+  [^String s context]
   ;; one loop over the characters, which most values pass, in place of a
   ;; check of what's legal and a pattern each
-  (let [n (count s)]
+  (let [attr? (= :attr context)
+        n     (count s)]
     (loop [i 0]
       (if (== i n)
         true
@@ -576,9 +545,8 @@
 
 ;; XML 1.0, section 2.11
 (defn- escape-legal-text
-  "The legal string `s` escaped for a text node, or `s` itself when nothing
-  needs escaping. A carriage return becomes a character reference, the
-  only form that a parser doesn't normalize away."
+  "The legal string `s` escaped for a text node, with a carriage return as
+  a character reference, which a parser doesn't normalize away."
   [s]
   (if (re-find #"[&<>\r]" s)
     (-> s
@@ -590,11 +558,10 @@
 
 ;; XML 1.0, section 3.3.3
 (defn- escape-attr
-  "The string `s` escaped for an attribute value, where a parser also
-  normalizes newlines and tabs to spaces unless they're character
-  references."
+  "The string `s` escaped for an attribute value, with newlines and tabs as
+  character references, which a parser doesn't turn into spaces."
   [s]
-  (if (plain? s true)
+  (if (plain? s :attr)
     s
     (let [s (escape-legal-text (legal s))]
       (if (re-find #"[\"\n\t]" s)
@@ -605,11 +572,11 @@
         s))))
 
 (defn- append-text
-  "The transient vector `acc` of string parts with the text `s` appended.
-  The text goes as CDATA when it holds markup but no carriage return,
-  which CDATA can't carry through a parser, or else escaped."
+  "The transient vector `acc` of string parts with the text `s` appended,
+  as CDATA when it holds markup, or else escaped. A carriage return or ]]>
+  rules out CDATA."
   [acc s]
-  (if (plain? s false)
+  (if (plain? s :text)
     (conj! acc s)
     (let [s (legal s)]
       (if (and (str/includes? s "<")
@@ -619,17 +586,16 @@
         (conj! acc (escape-legal-text s))))))
 
 (defn qname
-  "The XML name of the keyword `k`, e.g. itunes:author for :itunes/author
-  and title for :title."
+  "The XML name of the keyword `k`, e.g. dc:creator for :dc/creator."
   [k]
   (if-let [ns (namespace k)]
     (str ns ":" (name k))
     (name k)))
 
 (defn- aliases
-  "The set of namespace aliases that the tags and attributes in `tree` use,
-  in one walk that makes no lazy sequence."
+  "The set of namespace aliases that the tags and attributes in `tree` use."
   [tree]
+  ;; one walk, which makes no lazy sequence
   (letfn [(with-ns [acc k]
             (if-let [ns (namespace k)]
               (conj! acc ns)
@@ -649,8 +615,7 @@
 
 (defn ^:no-doc append-attrs
   "The transient vector `acc` of string parts with the attributes `attrs`
-  appended, each as a space, its name, an equals sign and its value in
-  quotes."
+  appended, each after a space."
   [acc attrs]
   (reduce-kv (fn [acc k v]
                (-> acc
@@ -663,8 +628,7 @@
              attrs))
 
 (def ^:no-doc indents
-  "The indentation of an element at each depth down to max-depth, two
-  spaces a level, made once rather than for every element."
+  "The indentation of an element at each depth, two spaces a level."
   (vec (take (inc max-depth) (iterate #(str % "  ") ""))))
 
 (declare emit-compact*)
@@ -672,9 +636,8 @@
 ;; One flat vector joined once at the end keeps a 30 MB document from being
 ;; copied once for each level of nesting
 (defn- emit-element*
-  "The transient vector `acc` of string parts with the serialization of
-  `element` appended, indented for `depth`. Mixed content is written as
-  it is."
+  "The transient vector `acc` of string parts with `element` appended,
+  indented for `depth`, except in mixed content."
   [acc depth element]
   (let [indent   (or (get indents depth) (apply str (repeat (* 2 depth) " ")))
         children (children element)]
@@ -726,14 +689,11 @@
   "The canonical Hiccup `tree` as an XML string, with the namespaces that
   it uses declared on the root element by `alias->uri`.
 
-  The `alias->uri` map gives the URI of each alias. It defaults to the
-  foreign namespaces of `tree`, e.g. those that were recorded when it was
-  parsed. An alias that it maps to nil has no URI to declare, so its
-  elements and attributes are left out, as for a prefix that no
-  declaration named in a parse. An alias that it doesn't map at all is an
-  error."
+  The `alias->uri` map defaults to the namespaces in the metadata of
+  `tree`. An alias that it maps to nil is left out, elements and
+  attributes alike, and one that it lacks is an error."
   ([tree]
-   (emit tree (foreign-namespaces tree)))
+   (emit tree (namespaces tree)))
   ([tree alias->uri]
    (let [undeclared (when (map? alias->uri)
                       (set (keep (fn [[alias uri]] (when (nil? uri) alias))
@@ -757,40 +717,36 @@
                                 (conj! "\n")))))))
 
 (defn- emit-compact*
-  "The transient vector `acc` of string parts with the one-line
-  serialization of `element` appended, its text appended by `text-fn`, a
-  function of the vector and a string."
-  [acc element text-fn]
+  "The transient vector `acc` of string parts with `element` appended on
+  one line, its text by `append-fn`, a function of the vector and a string."
+  [acc element append-fn]
   (let [name (qname (tag element))
         acc  (-> acc (conj! "<") (conj! name) (append-attrs (attrs element)))]
     (if (empty? (children element))
       (conj! acc "/>")
       (-> (reduce (fn [acc child]
                     (if (string? child)
-                      (text-fn acc child)
-                      (emit-compact* acc child text-fn)))
+                      (append-fn acc child)
+                      (emit-compact* acc child append-fn)))
                   (conj! acc ">")
                   (children element))
           (conj! "</") (conj! name) (conj! ">")))))
 
-(defn- escaped-text
+(defn- append-escaped
   "The transient vector `acc` of string parts with the text `s` appended,
   escaped, and never as CDATA, which HTML doesn't read."
   [acc s]
-  (conj! acc (if (plain? s false) s (escape-legal-text (legal s)))))
+  (conj! acc (if (plain? s :text) s (escape-legal-text (legal s)))))
 
 (defn inner-xml
-  "The content of `element` as markup: its text escaped and its child
-  elements serialized compactly.
-
-  This reads HTML that a document embeds as XML rather than as text in
-  CDATA, e.g. the description of an RSS item. An escaped tag stays text
-  and doesn't become an element."
+  "The content of `element` as markup on one line, e.g. HTML that a
+  document embeds as elements. Its text stays escaped, so an escaped tag
+  doesn't become an element."
   [element]
   (str/join (persistent! (reduce (fn [acc child]
                                    (if (string? child)
-                                     (escaped-text acc child)
-                                     (emit-compact* acc child escaped-text)))
+                                     (append-escaped acc child)
+                                     (emit-compact* acc child append-escaped)))
                                  (transient [])
                                  (children element)))))
 

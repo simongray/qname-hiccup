@@ -75,7 +75,7 @@ The shelf namespace isn't in the table, so it keeps the document's
 prefix, and the tree's metadata records its URI:
 
 ```clojure
-(xml/foreign-namespaces book)
+(xml/namespaces book)
 ;; => {:shelf "https://example.org/shelf"}
 ```
 
@@ -87,7 +87,7 @@ To write the tree back, give `xml/emit` the URI of each alias it uses.
 It declares them on the root element:
 
 ```clojure
-(println (xml/emit book (assoc (xml/foreign-namespaces book) :dc dc)))
+(println (xml/emit book (assoc (xml/namespaces book) :dc dc)))
 ;; <?xml version="1.0" encoding="UTF-8"?>
 ;; <book id="1" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:shelf="https://example.org/shelf">
 ;;   <title>Emma</title>
@@ -96,7 +96,7 @@ It declares them on the root element:
 ;; </book>
 ```
 
-Without the map, it uses the foreign namespaces of the tree. An alias
+Without the map, it uses the namespaces in the tree's metadata. An alias
 that the map leaves out is an error, and one that it maps to nil is left
 out of the document, elements and attributes alike.
 
