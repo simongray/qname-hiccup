@@ -39,7 +39,9 @@ It requires Clojure 1.11+ and Java 11+. Add it to the `:deps` in your
 `master`:
 
 ```clojure
-io.github.simongray/qname-hiccup {:git/sha "…"}
+dk.simongray/qname-hiccup
+{:git/url "https://github.com/simongray/qname-hiccup"
+ :git/sha "…"}
 ```
 
 For ClojureScript, also set `:deps true` in your `shadow-cljs.edn`, since
