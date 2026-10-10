@@ -1,11 +1,16 @@
 qname-hiccup
 ============
 
+[![Clojars Project](https://img.shields.io/clojars/v/dk.simongray/qname-hiccup.svg)](https://clojars.org/dk.simongray/qname-hiccup)
+
 This is a Clojure and ClojureScript library for reading XML into Hiccup
 and writing it back. It matches namespaces by their URI rather than by
 the prefix that a document happens to use: you give each namespace you
 care about an alias once, and its names come out as keywords under that
 alias, whatever prefix the document wrote.
+
+**NOTE:** If you only need the names as a document writes them,
+[xml-hiccup](https://github.com/kuhumcst/xml-hiccup) is smaller.
 
 - **Your aliases, not the document's.** With the alias `:dc` for Dublin
   Core, `<dc:creator>` and `<dublin:creator>` come out as `:dc/creator`,
@@ -23,8 +28,7 @@ alias, whatever prefix the document wrote.
   and DOMParser in JavaScript.
 
 The same code runs on the JVM, in Node and in the browser, with the same
-results on each. If you only need the names as a document writes them,
-[xml-hiccup](https://github.com/kuhumcst/xml-hiccup) is smaller.
+results on each.
 
 > This library was spun out of [podcast-clj](https://github.com/simongray/podcast-clj),
 > a library for making podcast software, where it reads and writes RSS
@@ -34,9 +38,16 @@ results on each. If you only need the names as a document writes them,
 Getting started
 ---------------
 
-It requires Clojure 1.11+ and Java 11+. Add it to the `:deps` in your
-`deps.edn` as a Git dependency, with the SHA of the latest commit on
-`master`:
+It requires Clojure 1.11+ and Java 11+. For the latest release, add it
+from [Clojars](https://clojars.org/dk.simongray/qname-hiccup) to the
+`:deps` in your `deps.edn`:
+
+```clojure
+dk.simongray/qname-hiccup {:mvn/version "0.1.0"}
+```
+
+For changes that aren't released yet, use the SHA of the latest commit on
+`master` instead:
 
 ```clojure
 dk.simongray/qname-hiccup
@@ -44,10 +55,12 @@ dk.simongray/qname-hiccup
  :git/sha "…"}
 ```
 
-For ClojureScript, also set `:deps true` in your `shadow-cljs.edn`, since
-shadow-cljs only reads Git dependencies from `deps.edn`. Browsers have a
-DOMParser. In Node, install one as `globalThis.DOMParser`, e.g. the one
-from @xmldom/xmldom.
+For ClojureScript, shadow-cljs only reads Git dependencies from
+`deps.edn`, so also set `:deps true` in your `shadow-cljs.edn`.
+
+In ClojureScript, it parses XML with a DOMParser, which browsers have. In
+Node, install one as `globalThis.DOMParser`, e.g. the one from
+@xmldom/xmldom.
 
 Parse a document with a table of the namespaces you know, from URI to
 alias:
