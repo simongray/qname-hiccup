@@ -5,31 +5,37 @@
   Unquoted attributes, stray angle brackets in text, and unclosed or
   mismatched tags give a tree as good as it gets, rather than an error. It
   needs org.jsoup/jsoup, which qname-hiccup leaves out."
-  (:require [dk.simongray.qname-hiccup :as xml])
+  (:require [dk.simongray.qname-hiccup :as xml]
+            [dk.simongray.qname-hiccup.parser :as parser]
+            [dk.simongray.qname-hiccup.whitespace :as whitespace])
   (:import [java.io InputStream]
            [org.jsoup Jsoup]
            [org.jsoup.nodes Attribute Document Element Node TextNode]
            [org.jsoup.parser Parser]))
 
 (defn- attrs
+  "The attributes of the jsoup `element`, by name as written."
   [^Element element]
-  (into {} (for [^Attribute a (.attributes element)]
-             [(.getKey a) (.getValue a)])))
+  (into {}
+        (map (fn [^Attribute a] [(.getKey a) (.getValue a)]))
+        (.attributes element)))
 
 (defn- node->raw
-  "The raw Hiccup of the jsoup `node` at `depth`, 1 for the root, with
-  elements and their text only."
-  [^Node node depth]
+  "The raw Hiccup of the jsoup `node` at `depth`, 1 for the root and no
+  deeper than `max-depth`, with elements and their text only."
+  [^Node node depth max-depth]
   (condp instance? node
     TextNode (.getWholeText ^TextNode node)
-    Element  (do (xml/check-depth depth)
-                 (let [children (.childNodes ^Element node)
-                       raw      (keep #(node->raw % (inc depth)) children)]
-                   (into [(.tagName ^Element node) (attrs node)]
-                         (xml/compact-text raw))))
+    Element  (do (parser/check-depth depth max-depth)
+                 (into [(.tagName ^Element node) (attrs node)]
+                       (whitespace/compact-text
+                        (into []
+                              (keep #(node->raw % (inc depth) max-depth))
+                              (.childNodes ^Element node)))))
     nil))
 
 (defn- document
+  "The jsoup document of `xml`, read in its XML mode."
   ^Document [xml]
   (cond
     (string? xml)
@@ -43,12 +49,15 @@
 
 (defn parse-raw
   "The raw Hiccup of `xml`, a string or an InputStream whose charset jsoup
-  detects, with names as written. It throws ::xml/malformed only when the
-  document has no element or nests too deep."
-  [xml]
-  (if-let [root (first (.children (document xml)))]
-    (node->raw root 1)
-    (throw (ex-info "Malformed XML: no root element" {:type ::xml/malformed}))))
+  detects, with names as written and elements nested no deeper than the
+  :max-depth of `opts`. It throws ::xml/malformed only when the document
+  has no element or nests too deep."
+  ([xml]
+   (parse-raw xml {}))
+  ([xml opts]
+   (if-let [root (first (.children (document xml)))]
+     (node->raw root 1 (or (:max-depth opts) xml/max-depth))
+     (throw (parser/malformed "no root element" nil)))))
 
 (comment
   (parse-raw "<book id=1><title>A <3 B</title></book>")

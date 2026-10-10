@@ -191,6 +191,19 @@
                    (catch clojure.lang.ExceptionInfo e
                      (:type (ex-data e)))))))))
 
+#?(:cljs
+   (deftest without-a-dom-parser
+     (let [parser js/DOMParser]
+       (set! (.-DOMParser js/globalThis) js/undefined)
+       (try
+         (is (= ::xml/no-parser
+                (try (xml/parse "<a/>") nil
+                     (catch ExceptionInfo e
+                       (:type (ex-data e)))))
+             "a platform without a parser is no fault of the XML")
+         (finally
+           (set! (.-DOMParser js/globalThis) parser))))))
+
 (deftest bom
   (is (= [:a {}] (xml/parse "﻿<a/>"))))
 
@@ -204,4 +217,23 @@
         (is (= ::xml/malformed
                (try (xml/parse (nested n)) nil
                     (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e
-                      (:type (ex-data e))))))))))
+                      (:type (ex-data e))))))))
+    (testing "a deep document is written back indented at every level"
+      (let [tree (xml/parse (nested 40))
+            out  (xml/emit tree)]
+        (is (re-find #"\n {78}<a/>\n" out))
+        (is (= tree (xml/parse out)))))))
+
+(deftest options
+  (testing "the :max-depth of the options"
+    (is (= [:a {} [:b {}]] (xml/parse "<a><b/></a>" {} {:max-depth 2})))
+    (is (= ::xml/malformed
+           (try (xml/parse-raw "<a><b><c/></b></a>" {:max-depth 2}) nil
+                (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e
+                  (:type (ex-data e)))))))
+  (testing "the :indent of the options"
+    (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<a>\n\t<b/>\n</a>\n"
+           (xml/emit [:a {} [:b {}]] {} {:indent "\t"}))))
+  (testing "an option given as nil has its default"
+    (is (= (xml/emit [:a {} [:b {}]])
+           (xml/emit [:a {} [:b {}]] nil {:indent nil})))))

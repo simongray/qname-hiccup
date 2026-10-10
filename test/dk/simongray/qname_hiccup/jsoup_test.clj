@@ -17,4 +17,7 @@
     (is (= ["a" {} ["b" {} "x" ["c" {} "y"]]] (jsoup/parse-raw "<a><b>x<c>y</b></a>"))))
   (testing "no element at all is still an error"
     (is (= ::xml/malformed (try (jsoup/parse-raw "just text")
+                                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+  (testing "and so is a document nested deeper than the :max-depth of the options"
+    (is (= ::xml/malformed (try (jsoup/parse-raw "<a><b><c/></b></a>" {:max-depth 2})
                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))

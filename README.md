@@ -139,17 +139,37 @@ changes:
 - Text of only white space is dropped, except a space between two
   elements on one line, which inline markup needs.
 
-Parsing a document that isn't well-formed, or that nests deeper than
-`xml/max-depth`, throws an ex-info with the `:type`
+Parsing a document that isn't well-formed, or that nests deeper than the
+`:max-depth` option, throws an ex-info with the `:type`
 `:dk.simongray.qname-hiccup/malformed`.
+
+Options
+-------
+
+The functions `xml/parse`, `xml/parse-raw` and `xml/emit` take a map of
+options as their last argument, which you can leave out:
+
+- `:max-depth`, how deep elements may nest, 256 by default
+- `:indent`, what each level is indented by when written, two spaces by
+  default
+
+```clojure
+(print (xml/emit [:book {} [:title {} "Emma"]] {} {:indent "\t"}))
+;; <?xml version="1.0" encoding="UTF-8"?>
+;; <book>
+;; 	<title>Emma</title>
+;; </book>
+```
+
+The defaults are in `xml/default-options`.
 
 Lenient parsing
 ---------------
 
 On the JVM, `dk.simongray.qname-hiccup.jsoup/parse-raw` uses the XML mode
 of jsoup to read documents that aren't well-formed, so unclosed tags and
-unquoted attributes still give a tree. Add `org.jsoup/jsoup` to your
-dependencies to use it:
+unquoted attributes still give a tree. It takes the `:max-depth` option
+too. Add `org.jsoup/jsoup` to your dependencies to use it:
 
 ```clojure
 (require '[dk.simongray.qname-hiccup.jsoup :as jsoup])
