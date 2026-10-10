@@ -8,10 +8,11 @@ care about an alias once, and its names come out as keywords under that
 alias, whatever prefix the document wrote.
 
 - **Your aliases, not the document's.** With the alias `:dc` for Dublin
-  Core, `<dc:creator>`, `<dublin:creator>`, and `<creator>` where Dublin
-  Core is the default namespace, all come out as `:dc/creator`.
-- **Back to XML.** Namespaces you didn't name keep the document's prefix
-  or stay where they were declared, and the writer declares them again.
+  Core, `<dc:creator>` and `<dublin:creator>` come out as `:dc/creator`,
+  and so does `<creator>` where Dublin Core is the default namespace.
+- **Back to XML.** A namespace that isn't in your table keeps the
+  document's prefix, or stays on its element if it's a default namespace,
+  so writing the tree back declares it again.
 - **Safe on untrusted input.** On the JVM, DTDs and external entities
   are off, so XXE and entity expansion attacks don't work. On every
   platform, nesting has a depth limit.
@@ -26,8 +27,8 @@ results on each. If you only need the names as a document writes them,
 [xml-hiccup](https://github.com/kuhumcst/xml-hiccup) is smaller.
 
 > This library was spun out of [podcast-clj](https://github.com/simongray/podcast-clj),
-> a library for making podcast software, which uses it to read and write
-> RSS feeds and OPML files. Like podcast-clj, it was developed with
+> a library for making podcast software, where it reads and writes RSS
+> feeds and OPML files. Like podcast-clj, it was developed with
 > assistance from frontier LLMs.
 
 Getting started
@@ -43,8 +44,8 @@ io.github.simongray/qname-hiccup {:git/sha "…"}
 
 For ClojureScript, also set `:deps true` in your `shadow-cljs.edn`, since
 shadow-cljs only reads Git dependencies from `deps.edn`. Browsers have a
-DOMParser, but Node doesn't, so there you install one as
-`globalThis.DOMParser`, e.g. that of @xmldom/xmldom.
+DOMParser. In Node, install one as `globalThis.DOMParser`, e.g. the one
+from @xmldom/xmldom.
 
 Parse a document with a table of the namespaces you know, from URI to
 alias:
@@ -79,17 +80,17 @@ prefix, and the tree's metadata records its URI:
 ;; => {:shelf "https://example.org/shelf"}
 ```
 
-A default namespace works the same way: element names without a prefix
-come out under its alias. If the table lacks it, the names stay plain,
-and its declaration stays on its element as the attribute `:xmlns`, so
-that it's written back where it was.
+A default namespace is looked up in the table too, so element names
+without a prefix come out under its alias. If the table lacks it, the
+names stay plain keywords, and the declaration stays on its element as
+the attribute `:xmlns`, so it's written back where it was.
 
-The metadata also holds a report of what the parse found, e.g. that
-unknown namespace, or a prefix that no declaration names, which
-`xml/report` gives.
+The metadata also holds a report of what the parse found, e.g. the
+unknown shelf namespace or a prefix that no declaration names. Get it
+with `xml/report`.
 
-To write the tree back, give `xml/emit` the URI of each alias it uses.
-It declares them on the root element:
+To write the tree back, give `xml/emit` a map of each alias in the tree
+to its URI. It declares those namespaces on the root element:
 
 ```clojure
 (println (xml/emit book (assoc (xml/namespaces book) :dc dc)))
@@ -101,9 +102,9 @@ It declares them on the root element:
 ;; </book>
 ```
 
-Without the map, it uses the namespaces in the tree's metadata. An alias
-that the map leaves out is an error, and one that it maps to nil is left
-out of the document, elements and attributes alike.
+Without the map, it uses the namespaces in the tree's metadata. If the
+tree uses an alias that the map lacks, `xml/emit` throws. An alias
+mapped to nil is dropped, along with its elements and attributes.
 
 Reading a tree
 --------------
@@ -116,37 +117,37 @@ The functions `xml/tag`, `xml/attrs`, `xml/children`, `xml/elements`,
 ;; => "Jane Austen"
 ```
 
-Text comes as the document wrote it. Use `xml/trim` to trim it the same
-way on every platform: like JavaScript's trim, and unlike Java's, it
-removes no-break spaces too.
+Text isn't trimmed. Use `xml/trim` to trim it the same way on every
+platform: like JavaScript's trim, and unlike Java's, it removes no-break
+spaces too.
 
-For more control, a parse comes in two parts. Use `xml/parse-raw` for
-Hiccup with the names as written, as strings, and
-`xml/resolve-namespaces` for the rest, e.g. on the Hiccup of another
-parser. Use `xml/decode` to turn the bytes of a document into text, and
+For more control, parse in two steps: `xml/parse-raw` gives Hiccup with
+the names as written, as strings, and `xml/resolve-namespaces` resolves
+them, which also works on the raw Hiccup of another parser. Use
+`xml/decode` to turn the bytes of a document into text, and
 `xml/inner-xml` to write the content of an element as markup, e.g. HTML
 that a document embeds as XML.
 
 What a tree keeps
 -----------------
 
-A tree keeps the elements, attributes and text of a document, but not
-everything else:
+A tree keeps the elements, attributes and text of a document, with these
+changes:
 
 - Comments and processing instructions are dropped.
 - CDATA becomes text, joined to the text around it.
 - Text of only white space is dropped, except a space between two
   elements on one line, which inline markup needs.
 
-A document that isn't well-formed throws an ex-info with the `:type`
-`:dk.simongray.qname-hiccup/malformed`, and so does one that nests deeper
-than `xml/max-depth`.
+Parsing a document that isn't well-formed, or that nests deeper than
+`xml/max-depth`, throws an ex-info with the `:type`
+`:dk.simongray.qname-hiccup/malformed`.
 
 Lenient parsing
 ---------------
 
-On the JVM, `dk.simongray.qname-hiccup.jsoup/parse-raw` reads documents
-that aren't well-formed with the XML mode of jsoup, so unclosed tags and
+On the JVM, `dk.simongray.qname-hiccup.jsoup/parse-raw` uses the XML mode
+of jsoup to read documents that aren't well-formed, so unclosed tags and
 unquoted attributes still give a tree. Add `org.jsoup/jsoup` to your
 dependencies to use it:
 
@@ -166,10 +167,10 @@ Principles
 - **Standards first.** The code follows XML 1.0, Namespaces in XML 1.0
   and RFC 7303, and cites their sections.
 - **Strict unless you ask.** The parser rejects what isn't well-formed,
-  and leniency is a separate parser that you choose.
-- **One codebase.** The library is written in `.cljc`, with no
-  dependencies but Clojure, and the helpers that read text agree on both
-  platforms.
+  and the lenient parser is a separate one that you choose.
+- **One codebase.** Apart from the JVM-only jsoup parser, the library is
+  written in `.cljc`, with no dependencies but Clojure, and its text
+  helpers give the same results on both platforms.
 
 Development
 -----------
