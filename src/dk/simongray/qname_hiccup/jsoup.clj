@@ -22,16 +22,25 @@
 
 (defn- node->raw
   "The raw Hiccup of the jsoup `node` at `depth`, 1 for the root and no
-  deeper than `max-depth`, with elements and their text only."
-  [^Node node depth max-depth]
+  deeper than `max-depth`, with elements and their text only, and white
+  space kept as `inherited?` and `default?` say to whitespace/keep-space?."
+  [^Node node depth max-depth default? inherited?]
   (condp instance? node
     TextNode (.getWholeText ^TextNode node)
     Element  (do (parser/check-depth depth max-depth)
-                 (into [(.tagName ^Element node) (attrs node)]
-                       (whitespace/compact-text
-                        (into []
-                              (keep #(node->raw % (inc depth) max-depth))
-                              (.childNodes ^Element node)))))
+                 (let [attributes (attrs node)
+                       keep?      (whitespace/keep-space? attributes
+                                                          inherited?
+                                                          default?)
+                       children   (into []
+                                        (keep #(node->raw % (inc depth)
+                                                          max-depth default?
+                                                          keep?))
+                                        (.childNodes ^Element node))]
+                   (into [(.tagName ^Element node) attributes]
+                         (if keep?
+                           (whitespace/joined-text children)
+                           (whitespace/compact-text children)))))
     nil))
 
 (defn- document
@@ -50,13 +59,15 @@
 (defn parse-raw
   "The raw Hiccup of `xml`, a string or an InputStream whose charset jsoup
   detects, with names as written and elements nested no deeper than the
-  :max-depth of `opts`. It throws ::xml/malformed only when the document
-  has no element or nests too deep."
+  :max-depth of `opts`, and white space as their :whitespace says, as in
+  xml/parse-raw. It throws ::xml/malformed only when the document has no
+  element or nests too deep."
   ([xml]
    (parse-raw xml {}))
   ([xml opts]
    (if-let [root (first (.children (document xml)))]
-     (node->raw root 1 (or (:max-depth opts) xml/max-depth))
+     (let [keep? (= :keep (:whitespace opts))]
+       (node->raw root 1 (or (:max-depth opts) xml/max-depth) keep? keep?))
      (throw (parser/malformed "no root element" nil)))))
 
 (comment

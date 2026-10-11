@@ -18,14 +18,16 @@
   (nth element 0))
 
 (defn attrs
-  "The attribute map of the Hiccup `element`."
+  "The attribute map of the Hiccup `element`, empty when it has none, e.g.
+  of [:title \"Emma\"]."
   [element]
-  (nth element 1))
+  (let [a (nth element 1 nil)]
+    (if (map? a) a {})))
 
 (defn children
   "The children of the Hiccup `element`: strings and elements."
   [element]
-  (drop 2 element))
+  (drop (if (map? (nth element 1 nil)) 2 1) element))
 
 (defn text
   "The text directly in the Hiccup `element`, joined."
@@ -83,9 +85,14 @@
   "  ")
 
 (def default-options
-  "The default of each option, all vars of the same name."
-  {:max-depth max-depth
-   :indent    indent})
+  "The default of each option, the vars of the same name, and these:
+
+  - :whitespace, :compact to leave out text of only white space, but a
+    space between two elements on one line, or :keep to keep all text, as
+    XML 1.0, section 2.10, has a processor do"
+  {:max-depth  max-depth
+   :indent     indent
+   :whitespace :compact})
 
 (defn- options
   "The `opts` with the defaults of the keys that they leave out or give as
@@ -102,12 +109,15 @@
 
   On the JVM, `xml` can also be a Reader, or an InputStream whose declared
   encoding is honoured. Comments and processing instructions are dropped,
-  text and CDATA merged, and text of only white space removed. A document
-  that isn't well-formed or nests too deep throws ::malformed."
+  and text and CDATA merged. Text of only white space is left out, as the
+  :whitespace of `opts` says, but kept in an element with
+  xml:space=\"preserve\" and its descendants. A document that isn't
+  well-formed or nests too deep throws ::malformed."
   ([xml]
    (parse-raw xml {}))
   ([xml opts]
-   (parser/parse-raw xml (:max-depth (options opts)))))
+   (let [{:keys [max-depth whitespace]} (options opts)]
+     (parser/parse-raw xml max-depth (= :keep whitespace)))))
 
 (defn- split-qname
   "The raw XML name `s` as a pair of its prefix, or nil, and its local
@@ -283,7 +293,9 @@
 
   The `alias->uri` map defaults to the namespaces in the metadata of
   `tree`. An alias that it maps to nil is left out, elements and
-  attributes alike, and one that it lacks is an error."
+  attributes alike, and one that it lacks is an error. The tree can also
+  be Hiccup as a renderer reads it, e.g. [:title \"Emma\"] without an
+  attribute map, or with a sequence of children, which is spliced in."
   ([tree]
    (emit tree (namespaces tree)))
   ([tree alias->uri]

@@ -238,12 +238,57 @@
             (keep #(if (string? %) % (without aliases %)))
             (subvec element 2)))))
 
+(declare normalized)
+
+(defn- children-of
+  "The `nodes` as the children of an element: strings and elements, with a
+  sequence spliced in, nil left out, and anything else as its text, as
+  Hiccup renderers read them."
+  [nodes]
+  (mapcat (fn [x]
+            (cond
+              (string? x) [x]
+              (vector? x) [(normalized x)]
+              (seq? x)    (children-of x)
+              (nil? x)    []
+              :else       [(str x)]))
+          nodes))
+
+(defn ^:no-doc normalized
+  "The Hiccup `element` with an attribute map and its children as strings
+  and elements, as children-of reads them, e.g. [:title {} \"Emma\"] for
+  [:title \"Emma\"]. An element that has them already stays the same
+  value."
+  [element]
+  (let [attrs? (map? (nth element 1 nil))
+        start  (if attrs? 2 1)
+        n      (count element)
+        plain? (loop [i start]
+                 (or (== i n)
+                     (let [x (nth element i)]
+                       (and (or (string? x) (vector? x))
+                            (recur (inc i))))))]
+    (if (and attrs? plain?)
+      ;; the common case, a canonical tree, is kept rather than copied
+      (reduce (fn [el i]
+                (let [x (nth el i)]
+                  (if (vector? x)
+                    (let [y (normalized x)]
+                      (if (identical? x y) el (assoc el i y)))
+                    el)))
+              element
+              (range 2 n))
+      (into [(nth element 0) (if attrs? (nth element 1) {})]
+            (children-of (subvec element start))))))
+
 (defn emit
-  "The canonical Hiccup `tree` as an XML string, with the namespaces that
-  it uses declared on the root element by `alias->uri`, and each level of
-  elements indented by `indent`."
+  "The Hiccup `tree` as an XML string, with the namespaces that it uses
+  declared on the root element by `alias->uri`, and each level of
+  elements indented by `indent`. The tree is canonical, or Hiccup as
+  normalized reads it."
   [tree alias->uri indent]
-  (let [dropped (when (map? alias->uri)
+  (let [tree    (normalized tree)
+        dropped (when (map? alias->uri)
                   (into #{} (keep (fn [[alias uri]] (when (nil? uri) alias)))
                         alias->uri))
         tree    (if (seq dropped)
@@ -271,4 +316,4 @@
                    (add-inner-text buf child)
                    (add-compact buf child add-inner-text)))
                (buffer)
-               (subvec element 2))))
+               (subvec (normalized element) 2))))

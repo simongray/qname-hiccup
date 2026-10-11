@@ -59,27 +59,51 @@
       (subs s start end))))
 
 (defn- kept-run
-  "The transient `acc` with the run of text `run` added, unless it's
-  blank. A blank run is kept when it's `between?` two elements on one
-  line."
-  [acc run between?]
+  "The transient `acc` with the run of text `run` added, unless it's empty,
+  or blank without `keep?`. A blank run is kept when it's `between?` two
+  elements on one line."
+  [acc run between? keep?]
   (if (and run
-           (or (not (blank? run))
+           (not= "" run)
+           (or keep?
+               (not (blank? run))
                (and between?
                     (not (str/includes? run "\n"))
                     (not (str/includes? run "\r")))))
     (conj! acc run)
     acc))
 
-(defn compact-text
-  "The `nodes` with adjacent strings merged and blank ones dropped. A space
-  between two elements on one line stays, as inline markup needs it."
-  [nodes]
+(defn- runs
+  "The `nodes` with adjacent strings merged, and blank ones dropped unless
+  `keep?`, as kept-run says."
+  [nodes keep?]
   (loop [nodes (seq nodes) acc (transient []) run nil after-element? false]
     (if nodes
       (let [node (first nodes)]
         (if (string? node)
           (recur (next nodes) acc (if run (str run node) node) after-element?)
-          (let [acc (conj! (kept-run acc run after-element?) node)]
+          (let [acc (conj! (kept-run acc run after-element? keep?) node)]
             (recur (next nodes) acc nil true))))
-      (persistent! (kept-run acc run false)))))
+      (persistent! (kept-run acc run false keep?)))))
+
+(defn compact-text
+  "The `nodes` with adjacent strings merged and blank ones dropped. A space
+  between two elements on one line stays, as inline markup needs it."
+  [nodes]
+  (runs nodes false))
+
+(defn joined-text
+  "The `nodes` with adjacent strings merged, white space and all."
+  [nodes]
+  (runs nodes true))
+
+;; XML 1.0, section 2.10
+(defn keep-space?
+  "Whether the text of an element with the raw `attrs` keeps its white
+  space: by its xml:space, preserve or default, or else as its parent's
+  does, `inherited?`. The `default?` is what default stands for."
+  [attrs inherited? default?]
+  (case (get attrs "xml:space")
+    "preserve" true
+    "default"  default?
+    inherited?))

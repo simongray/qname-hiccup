@@ -2,7 +2,8 @@
   (:require #?(:cljs [dk.simongray.qname-hiccup.test-setup])
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [dk.simongray.qname-hiccup :as xml]))
+            [dk.simongray.qname-hiccup :as xml]
+            [dk.simongray.qname-hiccup.serializer :as serializer]))
 
 (defn bytes-of
   "The bytes `xs`, numbers from 0 to 255, as the platform keeps bytes."
@@ -45,6 +46,35 @@
   (testing "a space between two elements on one line is kept, layout is not"
     (is (= ["p" {} ["b" {} "Hello"] " " ["i" {} "world"]] (xml/parse-raw "<p><b>Hello</b> <i>world</i></p>")))
     (is (= ["p" {} ["b" {} "Hello"] ["i" {} "world"]] (xml/parse-raw "<p>\n  <b>Hello</b>\n  <i>world</i>\n</p>")))))
+
+(deftest white-space-kept
+  (let [mixed "<p><b>Hello</b>\n<i>world</i> <code> </code></p>"]
+    (is (= ["p" {} ["b" {} "Hello"] ["i" {} "world"] " " ["code" {}]] (xml/parse-raw mixed)))
+    (is (= ["p" {} ["b" {} "Hello"] "\n" ["i" {} "world"] " " ["code" {} " "]]
+           (xml/parse-raw mixed {:whitespace :keep}))
+        "all of it on request, as XML passes it on"))
+  (testing "where xml:space asks for it, whatever the option"
+    (is (= ["doc" {} ["pre" {"xml:space" "preserve"} "\n" ["b" {} " x "] "\n"] ["p" {} ["b" {} "y"]]]
+           (xml/parse-raw "<doc>\n<pre xml:space=\"preserve\">\n<b> x </b>\n</pre>\n<p>\n<b>y</b>\n</p>\n</doc>"))
+        "on the element and its descendants alone")
+    (is (= ["doc" {"xml:space" "preserve"} ["p" {"xml:space" "default"} ["b" {} "y"]] "\n"]
+           (xml/parse-raw "<doc xml:space=\"preserve\"><p xml:space=\"default\">\n<b>y</b>\n</p>\n</doc>"))
+        "until an element sets it back to the default")))
+
+(deftest hiccup-as-a-renderer-takes-it
+  (let [feed [:feed [:title "Emma"] (for [i [1 2]] [:entry [:id i]]) nil]]
+    (is (= (str "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                "<feed>\n  <title>Emma</title>\n  <entry>\n    <id>1</id>\n  </entry>\n"
+                "  <entry>\n    <id>2</id>\n  </entry>\n</feed>\n")
+           (xml/emit feed {}))
+        "without attribute maps, with a sequence spliced in, nil left out and a number as its text")
+    (is (= "Emma" (xml/text [:title "Emma"])))
+    (is (= {} (xml/attrs [:title "Emma"])))
+    (is (= [[:id {} "1"]] (xml/elements [:entry [:id {} "1"]])))
+    (is (= "<b>x</b> y" (xml/inner-xml [:p [:b "x"] " y"]))))
+  (let [canonical (xml/parse sample)]
+    (is (identical? canonical (serializer/normalized canonical))
+        "a canonical tree is written as it is, not copied")))
 
 (deftest namespace-resolution
   (let [tree (xml/parse sample {itunes :itunes})]

@@ -121,6 +121,11 @@ Without the map, it uses the namespaces in the tree's metadata. If the
 tree uses an alias that the map lacks, `xml/emit` throws. An alias
 mapped to nil is dropped, along with its elements and attributes.
 
+You can also write the Hiccup yourself, e.g. a sitemap or an Atom feed,
+as every Hiccup renderer takes it: an element can leave out its
+attribute map, as in `[:title "Emma"]`, a sequence of children is
+spliced in, nil is left out, and a number is written as its text.
+
 Reading a tree
 --------------
 
@@ -152,7 +157,9 @@ changes:
 - Comments and processing instructions are dropped.
 - CDATA becomes text, joined to the text around it.
 - Text of only white space is dropped, except a space between two
-  elements on one line, which inline markup needs.
+  elements on one line, which inline markup needs. The option
+  `:whitespace :keep` keeps it all, and so does `xml:space="preserve"` on
+  an element, for the element and what it holds.
 
 Parsing a document that isn't well-formed, or that nests deeper than the
 `:max-depth` option, throws an ex-info with the `:type`
@@ -167,6 +174,8 @@ options as their last argument, which you can leave out:
 - `:max-depth`, how deep elements may nest, 256 by default
 - `:indent`, what each level is indented by when written, two spaces by
   default
+- `:whitespace`, `:compact` to drop text of only white space, as above,
+  or `:keep`
 
 ```clojure
 (print (xml/emit [:book {} [:title {} "Emma"]] {} {:indent "\t"}))

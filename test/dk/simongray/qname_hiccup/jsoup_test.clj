@@ -20,4 +20,8 @@
                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
   (testing "and so is a document nested deeper than the :max-depth of the options"
     (is (= ::xml/malformed (try (jsoup/parse-raw "<a><b><c/></b></a>" {:max-depth 2})
-                                (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+                                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+  (testing "white space as xml/parse-raw keeps it"
+    (is (= ["p" {} ["b" {} "x"] "\n" ["i" {} "y"]] (jsoup/parse-raw "<p><b>x</b>\n<i>y</i></p>" {:whitespace :keep})))
+    (is (= ["p" {"xml:space" "preserve"} ["b" {} "x"] "\n" ["i" {} "y"]]
+           (jsoup/parse-raw "<p xml:space=\"preserve\"><b>x</b>\n<i>y</i></p>")))))

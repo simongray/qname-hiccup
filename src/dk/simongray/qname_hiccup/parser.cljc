@@ -149,15 +149,17 @@
 
 (defn- read-children
   "The raw elements and text in the element at `source`, which nest at
-  `depth`, no deeper than `max-depth`. On the JVM, this reads the StAX
+  `depth`, no deeper than `max-depth`, with white space kept as `keep?`
+  and `default?` say to keep-space?. On the JVM, this reads the StAX
   reader up to the end tag."
-  [source depth max-depth]
+  [source depth max-depth default? keep?]
   #?(:clj  (let [^XMLStreamReader r source]
              (loop [acc (transient [])]
                (let [event (.next r)]
                  (cond
                    (== event XMLStreamConstants/START_ELEMENT)
-                   (recur (conj! acc (read-element r depth max-depth)))
+                   (recur (conj! acc (read-element r depth max-depth default?
+                                                   keep?)))
 
                    (or (== event XMLStreamConstants/CHARACTERS)
                        (== event XMLStreamConstants/CDATA)
@@ -173,32 +175,41 @@
                  child (fn [i]
                          (let [node (.item nodes i)]
                            (case (.-nodeType node)
-                             1     (read-element node depth max-depth)
+                             1     (read-element node depth max-depth default?
+                                                 keep?)
                              (3 4) (.-nodeValue node)
                              nil)))]
              (into [] (keep child) (range (.-length nodes))))))
 
 (defn- read-element
   "The raw Hiccup of the element at `source`, which nests at `depth`, 1 for
-  the root, no deeper than `max-depth`."
-  [source depth max-depth]
+  the root, no deeper than `max-depth`, with white space kept as its
+  xml:space says, or else as its parent's, `inherited?`, and `default?`
+  for xml:space=\"default\"."
+  [source depth max-depth default? inherited?]
   (check-depth depth max-depth)
-  (let [head (start-tag source)]
-    ;; the start tag first: on the JVM, reading the children moves past it
-    (into head (whitespace/compact-text
-                (read-children source (inc depth) max-depth)))))
+  (let [[_ attrs :as head] (start-tag source)
+        keep?              (whitespace/keep-space? attrs inherited? default?)
+        ;; the start tag first: on the JVM, reading the children moves
+        ;; past it
+        children           (read-children source (inc depth) max-depth
+                                          default? keep?)]
+    (into head (if keep?
+                 (whitespace/joined-text children)
+                 (whitespace/compact-text children)))))
 
 (defn parse-raw
   "The raw Hiccup of `xml`, with elements nested no deeper than
-  `max-depth`."
-  [xml max-depth]
+  `max-depth`, and white space kept when `keep?`, or else only where
+  xml:space says so."
+  [xml max-depth keep?]
   #?(:clj
      (try
        (let [^XMLStreamReader r (document xml)]
          (try
            (let [root (loop []
                         (if (== (.next r) XMLStreamConstants/START_ELEMENT)
-                          (read-element r 1 max-depth)
+                          (read-element r 1 max-depth keep? keep?)
                           (recur)))]
              ;; on to the end, where anything but a comment or white space
              ;; after the root is an error, as it is in a browser
@@ -210,4 +221,4 @@
        (catch XMLStreamException e
          (throw (malformed (.getMessage e) e))))
      :cljs
-     (read-element (document xml) 1 max-depth)))
+     (read-element (document xml) 1 max-depth keep? keep?)))
