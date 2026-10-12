@@ -4,8 +4,9 @@
   Raw Hiccup has the names as written. Canonical Hiccup has keywords
   namespaced by the alias that a table gives the URI, e.g. :dc/creator,
   whether the name has a prefix or is in the default namespace. Its
-  metadata has what the resolution found under :xml/report, and the
-  namespaces that the table lacks under :xml/namespaces."
+  metadata has what the resolution found under :xml/report, the
+  namespaces that the table lacks under :xml/namespaces, and those it has
+  under :xml/declared."
   (:require [clojure.string :as str]
             [dk.simongray.qname-hiccup.encoding :as encoding]
             [dk.simongray.qname-hiccup.parser :as parser]
@@ -51,6 +52,18 @@
   [element tag]
   (first (elements element tag)))
 
+(defn elements-in
+  "The descendants of `element` along the path of `tags`, a tag for each
+  level, e.g. the items of an RSS feed for [:channel :item]."
+  [element tags]
+  (reduce (fn [els tag] (mapcat #(elements % tag) els)) [element] tags))
+
+(defn element-in
+  "The first descendant of `element` along the path of `tags`, a tag for
+  each level, e.g. the title of an RSS feed for [:channel :title]."
+  [element tags]
+  (first (elements-in element tags)))
+
 (defn deep-text
   "All the text in `element` and its descendants, in document order."
   [element]
@@ -89,10 +102,14 @@
 
   - :whitespace, :compact to leave out text of only white space, but a
     space between two elements on one line, or :keep to keep all text, as
-    XML 1.0, section 2.10, has a processor do"
-  {:max-depth  max-depth
-   :indent     indent
-   :whitespace :compact})
+    XML 1.0, section 2.10, has a processor do
+  - :default-namespace, nil or the alias whose elements are written
+    without a prefix, in the default namespace, e.g. :atom for
+    <feed xmlns=\"http://www.w3.org/2005/Atom\">"
+  {:max-depth         max-depth
+   :indent            indent
+   :whitespace        :compact
+   :default-namespace nil})
 
 (defn- options
   "The `opts` with the defaults of the keys that they leave out or give as
@@ -112,7 +129,12 @@
   and text and CDATA merged. Text of only white space is left out, as the
   :whitespace of `opts` says, but kept in an element with
   xml:space=\"preserve\" and its descendants. A document that isn't
-  well-formed or nests too deep throws ::malformed."
+  well-formed or nests too deep throws ::malformed.
+
+  On the JVM, the entities of the internal DTD subset are expanded, and an
+  XHTML document has those of XHTML, but no external DTD or entity is
+  read. An entity that only such a DTD could declare is left out, and
+  the :xml/report in the metadata names those in text."
   ([xml]
    (parse-raw xml {}))
   ([xml opts]
@@ -139,18 +161,22 @@
 
 (defn- in-scope
   "The `scope` with the namespaces that the raw `attrs` declare, each under
-  its prefix as its URI and the alias that `uri->alias` gives it. A default
-  namespace without an alias is a problem, added to the volatile
-  `problems`."
-  [uri->alias problems scope attrs]
+  its prefix as its URI and the alias that `uri->alias` gives it.
+
+  The URI of each namespace with an alias is added to the volatile
+  `declared`, under the alias. A default namespace without an alias is a
+  problem, added to the volatile `problems`."
+  [uri->alias problems declared scope attrs]
   (let [decls (if (zero? (count attrs)) {} (declarations attrs))]
     (if (zero? (count decls))
       scope
-      (let [scope   (into scope
-                          (map (fn [[prefix uri]]
-                                 [prefix [uri (uri->alias uri)]]))
-                          decls)
+      (let [bound   (map (fn [[prefix uri]] [prefix [uri (uri->alias uri)]])
+                         decls)
+            scope   (into scope bound)
             default (get decls nil)]
+        (vswap! declared into
+                (keep (fn [[_ [uri alias]]] (when alias [alias uri])))
+                bound)
         (when (and (seq default)
                    (nil? (second (get scope nil))))
           (vswap! problems conj
@@ -213,14 +239,14 @@
 (defn- resolve-element
   "The raw Hiccup `element` resolved by `uri->alias` in `scope`, which holds
   the declarations of its ancestors. Problems are added to the volatile
-  `problems`."
-  [uri->alias problems scope [tag attrs & children]]
-  (let [scope (in-scope uri->alias problems scope attrs)]
+  `problems`, and the namespaces with an alias to the volatile `declared`."
+  [uri->alias problems declared scope [tag attrs & children]]
+  (let [scope (in-scope uri->alias problems declared scope attrs)]
     (into [(resolve-tag scope problems tag)
            (resolve-attrs scope problems attrs)]
           (map #(if (string? %)
                   %
-                  (resolve-element uri->alias problems scope %)))
+                  (resolve-element uri->alias problems declared scope %)))
           children)))
 
 (defn resolve-namespaces
@@ -231,12 +257,17 @@
   When `uri->alias` lacks that namespace, the names in it stay plain, and
   its declaration stays as the attribute :xmlns.
 
-  The metadata has the problems under :xml/report, and under
-  :xml/namespaces the URIs by prefix of the namespaces that `uri->alias`
-  lacks. A prefix that no declaration names has nil."
+  The metadata has:
+
+  - :xml/report, the problems, after those in the metadata of `tree`
+  - :xml/namespaces, the URIs by prefix of the namespaces that
+    `uri->alias` lacks, with nil for a prefix that no declaration names
+  - :xml/declared, the URIs by alias of the namespaces that the tree
+    declares and `uri->alias` has"
   [tree uri->alias]
-  (let [found     (volatile! [])
-        tree'     (resolve-element uri->alias found {} tree)
+  (let [found     (volatile! (vec (:xml/report (meta tree))))
+        declared  (volatile! {})
+        tree'     (resolve-element uri->alias found declared {} tree)
         problems  (distinct @found)
         by-prefix (fn [id]
                     (into {}
@@ -246,7 +277,8 @@
         foreign   (merge (by-prefix :xml/undeclared-prefix)
                          (by-prefix :xml/unknown-namespace))]
     (with-meta tree' {:xml/report     (vec problems)
-                      :xml/namespaces foreign})))
+                      :xml/namespaces foreign
+                      :xml/declared   @declared})))
 
 (defn parse
   "The canonical Hiccup of `xml`, with the namespaces resolved by
@@ -259,8 +291,8 @@
    (resolve-namespaces (parse-raw xml opts) uri->alias)))
 
 (defn report
-  "The problems found in resolving the namespaces of `tree`, as maps of an
-  :id, a :level and details."
+  "The problems found in parsing `tree` and resolving its namespaces, as
+  maps of an :id, a :level and details."
   [tree]
   (:xml/report (meta tree)))
 
@@ -288,20 +320,27 @@
 
 (defn emit
   "The canonical Hiccup `tree` as an XML string, with the namespaces that
-  it uses declared on the root element by `alias->uri`, and each level of
-  elements indented by the :indent of `opts`.
+  it uses declared on the root element by `alias->uri`, and the :indent
+  and :default-namespace of `opts`.
 
   The `alias->uri` map defaults to the namespaces in the metadata of
-  `tree`. An alias that it maps to nil is left out, elements and
-  attributes alike, and one that it lacks is an error. The tree can also
-  be Hiccup as a renderer reads it, e.g. [:title \"Emma\"] without an
-  attribute map, or with a sequence of children, which is spliced in."
+  `tree`, under :xml/namespaces and :xml/declared. An alias that it maps
+  to nil is left out, elements and attributes alike, and one that it
+  lacks is an error. The tree can also be Hiccup as a renderer reads it,
+  e.g. [:title \"Emma\"] without an attribute map, or with a sequence of
+  children, which is spliced in."
   ([tree]
-   (emit tree (namespaces tree)))
+   (emit tree nil))
   ([tree alias->uri]
    (emit tree alias->uri {}))
   ([tree alias->uri opts]
-   (serializer/emit tree alias->uri (:indent (options opts)))))
+   (let [{:keys [indent default-namespace]} (options opts)]
+     (serializer/emit tree
+                      (or alias->uri
+                          (merge (namespaces tree)
+                                 (:xml/declared (meta tree))))
+                      indent
+                      default-namespace))))
 
 (defn inner-xml
   "The content of `element` as markup on one line, e.g. HTML that a

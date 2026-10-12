@@ -128,6 +128,41 @@
                           {atom-ns :atom})
           out  (xml/emit tree {:atom atom-ns})]
       (is (re-find #"<atom:feed xmlns:atom=" out))
+      (is (= tree (xml/parse out {atom-ns :atom})))
+      (testing "and the metadata has it, so that it's written back without a table"
+        (is (= {:atom atom-ns} (:xml/declared (meta tree))))
+        (is (= out (xml/emit tree)))))))
+
+(def dc
+  "The namespace of Dublin Core, which the tests of default namespaces use."
+  "http://purl.org/dc/elements/1.1/")
+
+(deftest emitting-a-default-namespace
+  (testing "the elements of the alias have no prefix"
+    (is (= (str "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                "<feed xmlns=\"" atom-ns "\">\n  <title>T</title>\n</feed>\n")
+           (xml/emit [:atom/feed [:atom/title "T"]] {:atom atom-ns} {:default-namespace :atom}))))
+  (testing "a plain element undeclares it, and one of the alias below declares it again"
+    (let [tree [:atom/feed {} [:atom/entry {} [:x {} [:atom/id {} "1"]]] [:dc/creator {} "A"]]
+          out  (xml/emit tree {:atom atom-ns :dc dc} {:default-namespace :atom})]
+      (is (re-find #"<x xmlns=\"\">" out))
+      (is (re-find (re-pattern (str "<id xmlns=\"" atom-ns "\">1</id>")) out))
+      (is (re-find #"<dc:creator>A</dc:creator>" out))
+      (let [back (xml/parse out {atom-ns :atom dc :dc})]
+        (is (= (assoc-in tree [2 2 1] {:xmlns ""}) back) "the empty one stays, as a parse keeps it")
+        (is (= out (xml/emit back nil {:default-namespace :atom}))))))
+  (testing "a default namespace that the table lacks stays where it was"
+    (let [tree (xml/parse (str "<feed xmlns=\"" atom-ns "\"><site xmlns=\"com-wordpress:feed-additions:1\">"
+                               "<a>1</a></site></feed>")
+                          {atom-ns :atom})
+          out  (xml/emit tree nil {:default-namespace :atom})]
+      (is (not (re-find #"xmlns=\"\"" out)))
+      (is (= tree (xml/parse out {atom-ns :atom})))))
+  (testing "an attribute of the alias keeps its prefix, since attributes have no default namespace"
+    (let [tree [:atom/feed {:atom/x "1"} [:atom/title {} "T"]]
+          out  (xml/emit tree {:atom atom-ns} {:default-namespace :atom})]
+      (is (re-find #" atom:x=\"1\"" out))
+      (is (re-find #" xmlns:atom=" out))
       (is (= tree (xml/parse out {atom-ns :atom}))))))
 
 #?(:clj
@@ -158,6 +193,12 @@
     (is (= 3 (count (xml/elements el))))
     (is (= 2 (count (xml/elements el :b))))
     (is (= [:b {} "inner"] (xml/element el :b))))
+  (testing "a path of tags, one for each level"
+    (let [rss [:rss {} [:channel {} [:title {} "T"] [:item {} [:title {} "1"]] [:item {} [:title {} "2"]]]]]
+      (is (= [[:title {} "1"] [:title {} "2"]] (xml/elements-in rss [:channel :item :title])))
+      (is (= [:title {} "T"] (xml/element-in rss [:channel :title])))
+      (is (nil? (xml/element-in rss [:channel :link])))
+      (is (= [rss] (xml/elements-in rss [])) "an empty path is the element itself")))
   (is (= "Show" (xml/trim "\u00A0 Show\t\u00A0")) "no-break spaces are white space on both platforms")
   (is (= "a b" (xml/trim "a b"))))
 
@@ -197,7 +238,51 @@
 #?(:clj
    (deftest long-text-nodes-on-the-jvm
      (let [s (apply str (repeat 100001 "x"))]
-       (is (= s (xml/text (xml/parse (str "<a>" s "</a>"))))))))
+       (is (= s (xml/text (xml/parse (str "<a>" s "</a>"))))))
+     (let [s (apply str (repeat 150000 "&amp;"))]
+       (is (= 150000 (count (xml/text (xml/parse (str "<a>" s "</a>")))))
+           "the JDK counts each reference towards its limits on entities"))))
+
+(defn malformed?
+  "Whether parsing the document `s` throws ::xml/malformed."
+  [s]
+  (= ::xml/malformed
+     (try (xml/parse s) nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e
+            (:type (ex-data e))))))
+
+(defn laughs
+  "A document of nested entities, each ten of the one before, down to the
+  text `s`."
+  [s]
+  (str "<!DOCTYPE lolz [<!ENTITY lol0 \"" s "\">"
+       (apply str (for [i (range 1 10)]
+                    (str "<!ENTITY lol" i " \"" (apply str (repeat 10 (str "&lol" (dec i) ";"))) "\">")))
+       "]><lolz>&lol9;</lolz>"))
+
+#?(:clj
+   (deftest dtds-on-the-jvm
+     (testing "the internal subset declares entities"
+       (is (= [:a {} "hello world"] (xml/parse "<!DOCTYPE a [<!ENTITY e \"hello\">]><a>&e; world</a>"))))
+     (testing "an XHTML document has the entities of XHTML"
+       (is (= [:html {} [:p {} "a b—c"]]
+              (xml/parse (str "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\""
+                              " \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">"
+                              "<html><p>a&nbsp;b&mdash;c</p></html>")))))
+     (testing "an entity of another external DTD, which is never read, is left out, as a browser does"
+       (let [tree (xml/parse "<!DOCTYPE book SYSTEM \"docbook.dtd\"><book>A &product; B &product;</book>")]
+         (is (= [:book {} "A  B "] tree))
+         (is (= [{:id :xml/skipped-entity :level :warning :entity "product"}] (xml/report tree)))))
+     (testing "but one that no DTD could declare is malformed"
+       (is (malformed? "<a>&nbsp;</a>"))
+       (is (malformed? "<!DOCTYPE a [<!ENTITY e \"x\">]><a>&nbsp;</a>")))
+     (testing "an external entity is never read"
+       (is (= [:a {}] (xml/parse "<!DOCTYPE a [<!ENTITY s SYSTEM \"file:///etc/passwd\">]><a>&s;</a>"))))
+     (testing "entities that expand into gigabytes are malformed"
+       (is (malformed? (laughs "lol")))
+       (is (malformed? (laughs "")) "even when they expand to nothing")
+       (is (malformed? (str "<!DOCTYPE a [<!ENTITY x \"" (apply str (repeat 50000 "x")) "\">]>"
+                            "<a>" (apply str (repeat 1000 "&x;")) "</a>"))))))
 
 (deftest malformed
   (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) #"Malformed XML"

@@ -281,12 +281,41 @@
       (into [(nth element 0) (if attrs? (nth element 1) {})]
             (children-of (subvec element start))))))
 
+;; Namespaces in XML 1.0, section 6.2: an empty xmlns undeclares the
+;; default namespace
+(defn- defaulted
+  "The canonical `element` with the tags in the namespace of `alias`
+  unprefixed, in the default namespace `uri`, where `current` is the
+  default namespace of its parent as written, and `plain` that of its
+  plain tags as the tree has it, \"\" for none.
+
+  An element that needs another default than `current` declares it as
+  :xmlns. In the tree, a plain tag is in the default namespace that the
+  :xmlns of its nearest ancestor names, if any."
+  [alias uri current plain element]
+  (let [tag      (nth element 0)
+        attrs    (nth element 1)
+        explicit (get attrs :xmlns)
+        plain    (or explicit plain)
+        ns       (namespace tag)
+        wanted   (cond
+                   (= alias ns) uri
+                   (nil? ns)    plain)
+        attrs    (if (and wanted (not= wanted (or explicit current)))
+                   (assoc attrs :xmlns wanted)
+                   attrs)
+        current  (get attrs :xmlns current)]
+    (into [(if (= alias ns) (keyword (name tag)) tag) attrs]
+          (map #(if (string? %) % (defaulted alias uri current plain %)))
+          (subvec element 2))))
+
 (defn emit
   "The Hiccup `tree` as an XML string, with the namespaces that it uses
-  declared on the root element by `alias->uri`, and each level of
-  elements indented by `indent`. The tree is canonical, or Hiccup as
-  normalized reads it."
-  [tree alias->uri indent]
+  declared on the root element by `alias->uri`, each level of elements
+  indented by `indent`, and those in the namespace of `default-alias` in
+  the default namespace, if it isn't nil. The tree is canonical, or
+  Hiccup as normalized reads it."
+  [tree alias->uri indent default-alias]
   (let [tree    (normalized tree)
         dropped (when (map? alias->uri)
                   (into #{} (keep (fn [[alias uri]] (when (nil? uri) alias)))
@@ -298,6 +327,10 @@
                   (or (get alias->uri alias)
                       (throw (ex-info "Unknown namespace alias"
                                       {:alias alias}))))
+        tree    (if (and default-alias (not (contains? dropped default-alias)))
+                  (defaulted (name default-alias) (uri-of default-alias) "" ""
+                             tree)
+                  tree)
         decls   (into (sorted-map)
                       (map (fn [alias]
                              [(keyword "xmlns" (name alias)) (uri-of alias)]))

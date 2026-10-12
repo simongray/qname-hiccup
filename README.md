@@ -18,9 +18,9 @@ alias, whatever prefix the document wrote.
 - **Back to XML.** A namespace that isn't in your table keeps the
   document's prefix, or stays on its element if it's a default namespace,
   so writing the tree back declares it again.
-- **Safe on untrusted input.** On the JVM, DTDs and external entities
-  are off, so XXE and entity expansion attacks don't work. On every
-  platform, nesting has a depth limit.
+- **Safe on untrusted input.** On the JVM, no external DTD or entity is
+  read, so XXE attacks don't work, and entities can't expand into
+  gigabytes. On every platform, nesting has a depth limit.
 - **Bytes read as a browser reads them.** The encoding comes from the
   byte order mark, then from a charset you give, e.g. that of a
   Content-Type header, and then from the XML declaration.
@@ -117,9 +117,11 @@ to its URI. It declares those namespaces on the root element:
 ;; </book>
 ```
 
-Without the map, it uses the namespaces in the tree's metadata. If the
-tree uses an alias that the map lacks, `xml/emit` throws. An alias
-mapped to nil is dropped, along with its elements and attributes.
+Without the map, it uses the namespaces in the tree's metadata: those
+that the table lacks, and under `:xml/declared` those it has, so
+`(xml/emit book)` writes the same document. If the tree uses an alias
+that the map lacks, `xml/emit` throws. An alias mapped to nil is
+dropped, along with its elements and attributes.
 
 You can also write the Hiccup yourself, e.g. a sitemap or an Atom feed,
 as every Hiccup renderer takes it: an element can leave out its
@@ -136,6 +138,10 @@ The functions `xml/tag`, `xml/attrs`, `xml/children`, `xml/elements`,
 (xml/text (xml/element book :dc/creator))
 ;; => "Jane Austen"
 ```
+
+To go down more than one level, give `xml/element-in` or
+`xml/elements-in` a path of tags, e.g. `[:channel :item]` for the items
+of an RSS feed.
 
 Text isn't trimmed. Use `xml/trim` to trim it the same way on every
 platform: like JavaScript's trim, and unlike Java's, it removes no-break
@@ -160,6 +166,11 @@ changes:
   elements on one line, which inline markup needs. The option
   `:whitespace :keep` keeps it all, and so does `xml:space="preserve"` on
   an element, for the element and what it holds.
+- The entities of the DOCTYPE are expanded: those it declares itself,
+  and in an XHTML document those of XHTML, as a browser does. No
+  external DTD is read, so an entity that only one could declare is left
+  out, and on the JVM `xml/report` names it. In Node, xmldom reads no
+  DOCTYPE, so any entity but `&amp;` and the others of XML fails.
 
 Parsing a document that isn't well-formed, or that nests deeper than the
 `:max-depth` option, throws an ex-info with the `:type`
@@ -176,6 +187,9 @@ options as their last argument, which you can leave out:
   default
 - `:whitespace`, `:compact` to drop text of only white space, as above,
   or `:keep`
+- `:default-namespace`, an alias whose elements are written without a
+  prefix, in the default namespace, e.g. `:atom` for
+  `<feed xmlns="http://www.w3.org/2005/Atom">`
 
 ```clojure
 (print (xml/emit [:book {} [:title {} "Emma"]] {} {:indent "\t"}))

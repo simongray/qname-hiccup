@@ -3,10 +3,13 @@
   JavaScript, read into raw Hiccup with the names as written."
   (:require [dk.simongray.qname-hiccup :as-alias xml]
             [dk.simongray.qname-hiccup.encoding :as encoding]
+            #?(:clj [dk.simongray.qname-hiccup.xhtml :as xhtml])
             [dk.simongray.qname-hiccup.whitespace :as whitespace])
-  #?(:clj (:import [java.io InputStream Reader StringReader]
-                   [javax.xml.stream XMLInputFactory XMLStreamConstants
-                                     XMLStreamException XMLStreamReader])))
+  #?(:clj (:import [java.io ByteArrayInputStream InputStream Reader
+                    StringReader]
+                   [javax.xml.stream XMLInputFactory XMLResolver
+                                     XMLStreamConstants XMLStreamException
+                                     XMLStreamReader])))
 
 (defn malformed
   "The error for malformed XML, with the parser's `message` and the `cause`
@@ -34,9 +37,36 @@
                        {:type ::xml/no-parser})))))
 
 #?(:clj
+   (def ^:no-doc entity-limits
+     "The JDK's limits on entities, the same on every JDK, which stop a
+     document whose entities expand into gigabytes.
+
+     The JDK counts each &amp; and the like towards the total, and the
+     whole document towards the size of one entity, so the total is far
+     above that of any real document, and the size of one entity is
+     unlimited. The depth of elements is checked here, the same on every
+     JDK and in JavaScript."
+     {"entityExpansionLimit"      "64000"
+      "totalEntitySizeLimit"      "10000000"
+      "maxGeneralEntitySizeLimit" "0"
+      "maxElementDepth"           "0"}))
+
+#?(:clj
+   (defn- resolver
+     "An XMLResolver that never fetches: it gives the entities of XHTML
+     for the external DTD of an XHTML document, and nothing for any other
+     external DTD."
+     ^XMLResolver []
+     (reify XMLResolver
+       (resolveEntity [_ public-id _ _ _]
+         (ByteArrayInputStream.
+          (.getBytes ^String (if (xhtml/xhtml? public-id) xhtml/dtd "")
+                     "UTF-8"))))))
+
+#?(:clj
    (defn- input-factory
-     "A StAX factory without namespace processing, DTDs, external entities
-     or the JDK's limits on text size and depth."
+     "A StAX factory without namespace processing or external entities,
+     which reads the internal subset of a DTD within entity-limits."
      ^XMLInputFactory []
      (let [factory (XMLInputFactory/newInstance)]
        (doto factory
@@ -44,19 +74,17 @@
          ;; arrive as plain attributes
          (.setProperty XMLInputFactory/IS_NAMESPACE_AWARE false)
          (.setProperty XMLInputFactory/IS_COALESCING true)
-         (.setProperty XMLInputFactory/SUPPORT_DTD false)
+         (.setProperty XMLInputFactory/SUPPORT_DTD true)
          (.setProperty XMLInputFactory/IS_SUPPORTING_EXTERNAL_ENTITIES false)
-         (.setProperty XMLInputFactory/IS_REPLACING_ENTITY_REFERENCES true))
-       ;; Recent JDKs cap a single text node at 100,000 characters, which
-       ;; long texts exceed, and JDK 24 caps nesting at 100 levels. With DTDs
-       ;; off the entity limits guard nothing, and the depth is checked
-       ;; here, the same on every JDK and in JavaScript.
-       (doseq [limit ["jdk.xml.maxGeneralEntitySizeLimit"
-                      "jdk.xml.totalEntitySizeLimit"
-                      "jdk.xml.maxElementDepth"]]
+         (.setProperty XMLInputFactory/IS_REPLACING_ENTITY_REFERENCES true)
+         (.setXMLResolver (resolver)))
+       ;; JDK 11 knows only the legacy names of the limits
+       (doseq [prefix        ["http://www.oracle.com/xml/jaxp/properties/"
+                              "jdk.xml."]
+               [limit value] entity-limits]
          (try
-           (.setProperty factory limit "0")
-           (catch Exception _)))
+           (.setProperty factory (str prefix limit) value)
+           (catch IllegalArgumentException _)))
        factory)))
 
 (defn- document
@@ -150,16 +178,17 @@
 (defn- read-children
   "The raw elements and text in the element at `source`, which nest at
   `depth`, no deeper than `max-depth`, with white space kept as `keep?`
-  and `default?` say to keep-space?. On the JVM, this reads the StAX
-  reader up to the end tag."
-  [source depth max-depth default? keep?]
+  and `default?` say to keep-space?, and the names of skipped entities
+  added to the volatile `skipped`. On the JVM, this reads the StAX reader
+  up to the end tag."
+  [source depth max-depth default? keep? skipped]
   #?(:clj  (let [^XMLStreamReader r source]
              (loop [acc (transient [])]
                (let [event (.next r)]
                  (cond
                    (== event XMLStreamConstants/START_ELEMENT)
                    (recur (conj! acc (read-element r depth max-depth default?
-                                                   keep?)))
+                                                   keep? skipped)))
 
                    (or (== event XMLStreamConstants/CHARACTERS)
                        (== event XMLStreamConstants/CDATA)
@@ -169,6 +198,13 @@
                    (== event XMLStreamConstants/END_ELEMENT)
                    (persistent! acc)
 
+                   ;; XML 1.0, section 4.1, VC Entity Declared: an entity
+                   ;; that only the external DTD can declare, which is
+                   ;; never read, is skipped, as a browser skips it
+                   (== event XMLStreamConstants/ENTITY_REFERENCE)
+                   (do (vswap! skipped conj (.getLocalName r))
+                       (recur acc))
+
                    :else
                    (recur acc)))))
      :cljs (let [nodes (.-childNodes source)
@@ -176,7 +212,7 @@
                          (let [node (.item nodes i)]
                            (case (.-nodeType node)
                              1     (read-element node depth max-depth default?
-                                                 keep?)
+                                                 keep? skipped)
                              (3 4) (.-nodeValue node)
                              nil)))]
              (into [] (keep child) (range (.-length nodes))))))
@@ -184,19 +220,33 @@
 (defn- read-element
   "The raw Hiccup of the element at `source`, which nests at `depth`, 1 for
   the root, no deeper than `max-depth`, with white space kept as its
-  xml:space says, or else as its parent's, `inherited?`, and `default?`
-  for xml:space=\"default\"."
-  [source depth max-depth default? inherited?]
+  xml:space says, or else as its parent's, `inherited?`, `default?` for
+  xml:space=\"default\", and the names of skipped entities added to the
+  volatile `skipped`."
+  [source depth max-depth default? inherited? skipped]
   (check-depth depth max-depth)
   (let [[_ attrs :as head] (start-tag source)
         keep?              (whitespace/keep-space? attrs inherited? default?)
         ;; the start tag first: on the JVM, reading the children moves
         ;; past it
         children           (read-children source (inc depth) max-depth
-                                          default? keep?)]
+                                          default? keep? skipped)]
     (into head (if keep?
                  (whitespace/joined-text children)
                  (whitespace/compact-text children)))))
+
+#?(:clj
+   (defn- with-skipped
+     "The raw Hiccup `root` with a report of the entities named in `skipped`
+     in its metadata, if any."
+     [root skipped]
+     (if (empty? skipped)
+       root
+       (with-meta root
+         {:xml/report (mapv (fn [entity]
+                              {:id :xml/skipped-entity :level :warning
+                               :entity entity})
+                            (distinct skipped))}))))
 
 (defn parse-raw
   "The raw Hiccup of `xml`, with elements nested no deeper than
@@ -205,20 +255,21 @@
   [xml max-depth keep?]
   #?(:clj
      (try
-       (let [^XMLStreamReader r (document xml)]
+       (let [^XMLStreamReader r (document xml)
+             skipped            (volatile! [])]
          (try
            (let [root (loop []
                         (if (== (.next r) XMLStreamConstants/START_ELEMENT)
-                          (read-element r 1 max-depth keep? keep?)
+                          (read-element r 1 max-depth keep? keep? skipped)
                           (recur)))]
              ;; on to the end, where anything but a comment or white space
              ;; after the root is an error, as it is in a browser
              (while (.hasNext r)
                (.next r))
-             root)
+             (with-skipped root @skipped))
            (finally
              (.close r))))
        (catch XMLStreamException e
          (throw (malformed (.getMessage e) e))))
      :cljs
-     (read-element (document xml) 1 max-depth keep? keep?)))
+     (read-element (document xml) 1 max-depth keep? keep? nil)))
