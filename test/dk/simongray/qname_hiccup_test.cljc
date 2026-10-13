@@ -183,7 +183,11 @@
     (is (= (str/replace doc "ISO-8859-1" "UTF-8") (xml/decode utf "UTF-8")) "by the charset given")
     (is (= "<a/>" (xml/decode (bytes-of [0xef 0xbb 0xbf 0x3c 0x61 0x2f 0x3e]) "ISO-8859-1"))
         "by the byte order mark first, which is left out")
-    (is (= "<a/>" (xml/decode (utf-8 "<a/>") "nonsense")) "an unknown charset counts as UTF-8")))
+    (is (= "<a/>" (xml/decode (utf-8 "<a/>") "nonsense")) "an unknown charset counts as UTF-8")
+    (is (= doc (xml/decode latin "nonsense")) "and gives way to the declaration")
+    (is (= "<t>“hi”</t>" (xml/decode (bytes-of [0x3c 0x74 0x3e 0x93 0x68 0x69 0x94 0x3c 0x2f 0x74 0x3e])
+                                     "iso-8859-1"))
+        "a label of Latin-1 as windows-1252, as in a browser")))
 
 (deftest helpers
   (let [el [:a {:x "1"} "t1" [:b {} "inner"] "t2" [:c {}] [:b {} "again"]]]

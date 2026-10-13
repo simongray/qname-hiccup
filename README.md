@@ -23,9 +23,12 @@ alias, whatever prefix the document wrote.
   gigabytes. On every platform, nesting has a depth limit.
 - **Bytes read as a browser reads them.** The encoding comes from the
   byte order mark, then from a charset you give, e.g. that of a
-  Content-Type header, and then from the XML declaration.
-- **No dependencies.** It uses the platform's own parser: StAX on the JVM
-  and DOMParser in JavaScript.
+  Content-Type header, and then from the XML declaration. A label means
+  what it means in a browser, e.g. latin1 is windows-1252.
+- **The platform's own parser.** It uses StAX on the JVM and DOMParser in
+  JavaScript. Its only dependency is
+  [whatwg-mime](https://github.com/simongray/whatwg-mime), which decodes
+  the bytes.
 
 The same code runs on the JVM, in Node and in the browser, with the same
 results on each.
@@ -43,7 +46,7 @@ from [Clojars](https://clojars.org/dk.simongray/qname-hiccup) to the
 `:deps` in your `deps.edn`:
 
 ```clojure
-dk.simongray/qname-hiccup {:mvn/version "0.3.0"}
+dk.simongray/qname-hiccup {:mvn/version "0.4.0"}
 ```
 
 For changes that aren't released yet, use the SHA of the latest commit on
@@ -227,8 +230,8 @@ Principles
 - **Strict unless you ask.** The parser rejects what isn't well-formed,
   and the lenient parser is a separate one that you choose.
 - **One codebase.** Apart from the JVM-only jsoup parser, the library is
-  written in `.cljc`, with no dependencies but Clojure, and its text
-  helpers give the same results on both platforms.
+  written in `.cljc`, and its text helpers give the same results on both
+  platforms.
 
 Development
 -----------

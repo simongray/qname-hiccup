@@ -1,9 +1,10 @@
 {:paths ["src"]
 
  ;; Clojure 1.11 is the floor, and the tests run on it unless an alias says
- ;; otherwise. The jsoup namespace needs org.jsoup/jsoup, which only the
- ;; tests bring.
- :deps  {org.clojure/clojure {:mvn/version "1.11.4"}}
+ ;; otherwise. whatwg-mime decodes the bytes of a document by its labels.
+ ;; The jsoup namespace needs org.jsoup/jsoup, which only the tests bring.
+ :deps  {org.clojure/clojure      {:mvn/version "1.11.4"}
+         dk.simongray/whatwg-mime {:mvn/version "0.2.0"}}
 
  :aliases
  {;; clojure -X:test

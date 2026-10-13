@@ -79,8 +79,9 @@
   "The text of the XML document in the bytes `b`, in the encoding that its
   byte order mark, `charset` or XML declaration names first, or else UTF-8.
 
-  The `charset` is e.g. that of a Content-Type header. An unknown encoding
-  counts as UTF-8, and the byte order mark is dropped."
+  The `charset` is e.g. that of a Content-Type header. Each label names an
+  encoding as a browser reads it, e.g. latin1 names windows-1252, and a
+  label of no encoding doesn't count. The byte order mark is dropped."
   ([b]
    (decode b nil))
   ([b charset]
