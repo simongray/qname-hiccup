@@ -101,6 +101,9 @@
 (def default-options
   "The default of each option, the vars of the same name, and these:
 
+  - :indent, which can also be false, to write the document on one line
+    with no white space of its own, e.g. so that a value made of elements
+    reads back as it was
   - :whitespace, :compact to leave out text of only white space, but a
     space between two elements on one line, or :keep to keep all text, as
     XML 1.0, section 2.10, has a processor do
@@ -160,23 +163,38 @@
                      (str/starts-with? k "xmlns:") [(subs k 6) v])))
         attrs))
 
+;; Namespaces in XML 1.0, section 3: an empty URI only undeclares the
+;; default namespace, and a prefix can't be bound to it
+(defn- alias-of
+  "The alias that `uri->alias` gives the namespace `uri` that `prefix` (nil
+  for the default namespace) is bound to. The empty URI is no namespace
+  and has none, and a prefix bound to it is malformed."
+  [uri->alias prefix uri]
+  (cond
+    (seq uri) (uri->alias uri)
+    prefix    (throw (ex-info (str "Malformed XML: the prefix " prefix
+                                   " is bound to no namespace")
+                              {:type ::malformed :prefix prefix}))
+    :else     nil))
+
 (defn- in-scope
   "The `scope` with the namespaces that the raw `attrs` declare, each under
   its prefix as its URI and the alias that `uri->alias` gives it.
 
-  The URI of each namespace with an alias is added to the volatile
+  The URI of each namespace with a keyword alias is added to the volatile
   `declared`, under the alias. A default namespace without an alias is a
   problem, added to the volatile `problems`."
   [uri->alias problems declared scope attrs]
   (let [decls (if (zero? (count attrs)) {} (declarations attrs))]
     (if (zero? (count decls))
       scope
-      (let [bound   (map (fn [[prefix uri]] [prefix [uri (uri->alias uri)]])
+      (let [bound   (map (fn [[prefix uri]]
+                           [prefix [uri (alias-of uri->alias prefix uri)]])
                          decls)
             scope   (into scope bound)
             default (get decls nil)]
         (vswap! declared into
-                (keep (fn [[_ [uri alias]]] (when alias [alias uri])))
+                (keep (fn [[_ [uri alias]]] (when (keyword? alias) [alias uri])))
                 bound)
         (when (and (seq default)
                    (nil? (second (get scope nil))))
@@ -254,6 +272,12 @@
   "The raw Hiccup `tree` as canonical Hiccup, with names namespaced by the
   aliases that `uri->alias` gives their URIs, and no xmlns declarations.
 
+  The `uri->alias` is a map or a function of a URI. A function can give
+  the URI itself for the namespaces it has no alias for, e.g. #(get table
+  % %), so that every name keeps its namespace, and emit writes those
+  back under prefixes of their own. A prefix bound to the empty URI throws
+  ::malformed.
+
   An element name without a prefix is in the default namespace, if any.
   When `uri->alias` lacks that namespace, the names in it stay plain, and
   its declaration stays as the attribute :xmlns.
@@ -264,7 +288,7 @@
   - :xml/namespaces, the URIs by prefix of the namespaces that
     `uri->alias` lacks, with nil for a prefix that no declaration names
   - :xml/declared, the URIs by alias of the namespaces that the tree
-    declares and `uri->alias` has"
+    declares and `uri->alias` gives a keyword alias"
   [tree uri->alias]
   (let [found     (volatile! (vec (:xml/report (meta tree))))
         declared  (volatile! {})
@@ -327,9 +351,13 @@
   The `alias->uri` map defaults to the namespaces in the metadata of
   `tree`, under :xml/namespaces and :xml/declared. An alias that it maps
   to nil is left out, elements and attributes alike, and one that it
-  lacks is an error. The tree can also be Hiccup as a renderer reads it,
-  e.g. [:title \"Emma\"] without an attribute map, or with a sequence of
-  children, which is spliced in."
+  lacks is an error. A keyword namespace with a colon, which no alias
+  has, is a namespace URI itself, e.g. that of (keyword \"DAV:\"
+  \"getetag\"), and gets a prefix of its own: ns1, ns2 and so on.
+
+  The tree can also be Hiccup as a renderer reads it, e.g. [:title
+  \"Emma\"] without an attribute map, or with a sequence of children,
+  which is spliced in."
   ([tree]
    (emit tree nil))
   ([tree alias->uri]

@@ -206,8 +206,9 @@
               (add indent)
               (add-end-tag name)))))))
 
-(defn- aliases
-  "The set of namespace aliases that the tags and attributes in `tree` use."
+(defn- namespaces-in
+  "The set of the keyword namespaces, as strings, that the tags and
+  attributes in `tree` use, but xml."
   [tree]
   ;; one walk, which makes no lazy sequence
   (letfn [(with-ns [acc k]
@@ -223,9 +224,34 @@
                   (let [child (nth el i)]
                     (recur (inc i) (if (vector? child) (walk acc child) acc)))
                   acc))))]
-    (into #{}
-          (comp (remove #{"xml"}) (map keyword))
-          (persistent! (walk (transient #{}) tree)))))
+    (disj (persistent! (walk (transient #{}) tree)) "xml")))
+
+;; Namespaces in XML 1.0, section 3: a prefix is an NCName, which has no
+;; colon, and a namespace name is a URI, which has one after its scheme
+(defn- namespace-uri?
+  "Whether the keyword namespace `ns` is a namespace URI rather than an
+  alias."
+  [ns]
+  (str/includes? ns ":"))
+
+(defn- prefixes
+  "A prefix for each namespace URI among the keyword namespaces `used`, by
+  URI: ns1, ns2 and so on, in the order of the URIs, but none of those
+  `taken`."
+  [used taken]
+  (let [uris (sort (filter namespace-uri? used))]
+    (zipmap uris (remove #(contains? taken %) (map #(str "ns" %) (iterate inc 1))))))
+
+(defn- renamed
+  "The canonical `element` with each name in a namespace that `prefix-of`
+  has under that prefix instead."
+  [prefix-of element]
+  (let [rename #(if-let [prefix (some-> (namespace %) prefix-of)]
+                  (keyword prefix (name %))
+                  %)]
+    (into [(rename (nth element 0)) (update-keys (nth element 1) rename)]
+          (map #(if (string? %) % (renamed prefix-of %)))
+          (subvec element 2))))
 
 (defn- without
   "The Hiccup `element` without the elements and attributes in the
@@ -312,34 +338,44 @@
 (defn emit
   "The Hiccup `tree` as an XML string, with the namespaces that it uses
   declared on the root element by `alias->uri`, each level of elements
-  indented by `indent`, and those in the namespace of `default-alias` in
-  the default namespace, if it isn't nil. The tree is canonical, or
-  Hiccup as normalized reads it."
+  indented by `indent`, or all on one line when it's false, and those in
+  the namespace of `default-alias` in the default namespace, if it isn't
+  nil. The tree is canonical, or Hiccup as normalized reads it. A
+  keyword namespace that's a URI gets a prefix of its own."
   [tree alias->uri indent default-alias]
-  (let [tree    (normalized tree)
-        dropped (when (map? alias->uri)
-                  (into #{} (keep (fn [[alias uri]] (when (nil? uri) alias)))
-                        alias->uri))
-        tree    (if (seq dropped)
-                  (or (without dropped tree) tree)
-                  tree)
-        uri-of  (fn [alias]
-                  (or (get alias->uri alias)
-                      (throw (ex-info "Unknown namespace alias"
-                                      {:alias alias}))))
-        tree    (if (and default-alias (not (contains? dropped default-alias)))
-                  (defaulted (name default-alias) (uri-of default-alias) "" ""
-                             tree)
-                  tree)
-        decls   (into (sorted-map)
-                      (map (fn [alias]
-                             [(keyword "xmlns" (name alias)) (uri-of alias)]))
-                      (aliases tree))
-        root    (update tree 1 #(into decls %))]
-    (str (-> (buffer)
-             (add "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-             (add-element (indents indent) 0 root)
-             (add "\n")))))
+  (let [tree      (normalized tree)
+        dropped   (when (map? alias->uri)
+                    (into #{} (keep (fn [[alias uri]] (when (nil? uri) alias)))
+                          alias->uri))
+        tree      (if (seq dropped)
+                    (or (without dropped tree) tree)
+                    tree)
+        uri-of    (fn [alias]
+                    (or (get alias->uri alias)
+                        (throw (ex-info "Unknown namespace alias"
+                                        {:alias alias}))))
+        tree      (if (and default-alias (not (contains? dropped default-alias)))
+                    (defaulted (name default-alias) (uri-of default-alias) "" ""
+                               tree)
+                    tree)
+        used      (namespaces-in tree)
+        prefix-of (prefixes used (into used (map name) (keys alias->uri)))
+        decls     (into (sorted-map)
+                        (map (fn [ns]
+                               (if-let [prefix (prefix-of ns)]
+                                 [(keyword "xmlns" prefix) ns]
+                                 [(keyword "xmlns" ns) (uri-of (keyword ns))])))
+                        used)
+        root      (update (cond->> tree (seq prefix-of) (renamed prefix-of))
+                          1 #(into decls %))]
+    (str (if (false? indent)
+           (-> (buffer)
+               (add "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+               (add-compact root add-text))
+           (-> (buffer)
+               (add "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+               (add-element (indents indent) 0 root)
+               (add "\n"))))))
 
 (defn inner-xml
   "The content of `element` as markup on one line, with its text escaped."

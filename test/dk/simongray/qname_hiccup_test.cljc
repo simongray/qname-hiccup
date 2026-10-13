@@ -76,6 +76,10 @@
     (is (identical? canonical (serializer/normalized canonical))
         "a canonical tree is written as it is, not copied")))
 
+(def atom-ns
+  "The namespace of Atom, which the tests of default namespaces use."
+  "http://www.w3.org/2005/Atom")
+
 (deftest namespace-resolution
   (let [tree (xml/parse sample {itunes :itunes})]
     (is (= [:rss {:version "2.0" :xmlns "http://www.w3.org/2005/Atom"}] (subvec tree 0 2)))
@@ -91,11 +95,20 @@
   (testing "without a table, every prefix keeps its own alias"
     (let [tree (xml/parse sample)]
       (is (= [:itunes/author {} "A"] (-> tree (nth 2) (nth 3))))
-      (is (= {:itunes itunes :acme "https://acme.example"} (xml/namespaces tree))))))
-
-(def atom-ns
-  "The namespace of Atom, which the tests of default namespaces use."
-  "http://www.w3.org/2005/Atom")
+      (is (= {:itunes itunes :acme "https://acme.example"} (xml/namespaces tree)))))
+  (testing "a function as the table, which gives the rest their URIs"
+    (let [uri->alias #(get {itunes :itunes} % %)
+          tree       (xml/parse sample uri->alias)]
+      (is (= (keyword atom-ns "rss") (xml/tag tree)) "the default namespace too")
+      (is (= [:itunes/author {} "A"] (-> tree (nth 2) (nth 3))))
+      (is (= [(keyword "https://acme.example" "thing") {(keyword "https://acme.example" "mode") "on"}]
+             (-> tree (nth 2) (nth 4))))
+      (is (= {:itunes itunes} (:xml/declared (meta tree))) "under their keyword aliases alone")
+      (is (= tree (xml/parse (xml/emit tree) uri->alias)) "and written back")
+      (testing "while the empty URI is no namespace"
+        (is (= [(keyword atom-ns "feed") {} [:entry {:xmlns ""}]]
+               (xml/parse (str "<feed xmlns=\"" atom-ns "\"><entry xmlns=\"\"/></feed>")
+                          uri->alias)))))))
 
 (deftest default-namespaces
   (testing "an element name without a prefix takes its alias, an attribute name doesn't"
@@ -219,6 +232,15 @@
   (testing "an unknown alias without a URI is an error"
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo)
                  (xml/emit [:rss {} [:foo/bar {}]]))))
+  (testing "a URI as a keyword namespace gets a prefix of its own, which no alias has"
+    (let [tree [(keyword "DAV:" "prop") {}
+                [(keyword "http://x/" "a") {(keyword "http://x/" "b") "1"} "v"]
+                [:ns1/c {}]]
+          out  (xml/emit tree {:ns1 "urn:c"})]
+      (is (re-find #"xmlns:ns2=\"DAV:\"" out))
+      (is (re-find #"xmlns:ns3=\"http://x/\"" out))
+      (is (re-find #"<ns3:a ns3:b=\"1\">v</ns3:a>" out))
+      (is (= tree (xml/parse out #(get {"urn:c" :ns1} % %))))))
   (testing "round trip"
     (let [tree (xml/parse "<rss version=\"2.0\"><channel><title>A</title><item><guid isPermaLink=\"false\">x</guid></item></channel></rss>")]
       (is (= tree (xml/parse (xml/emit tree))))))
@@ -303,6 +325,8 @@
                     (:type (ex-data e)))))
           s))
     (is (= [:rss {}] (xml/parse "<rss/>\n<!-- served in 0.2 s -->\n"))))
+  (testing "a prefix bound to no namespace, which Namespaces in XML forbids"
+    (is (malformed? "<a xmlns:b=\"\"><b:c/></a>")))
   #?(:clj
      (testing "and so is an XML declaration the parser does not read"
        (is (= ::xml/malformed
@@ -352,7 +376,10 @@
                   (:type (ex-data e)))))))
   (testing "the :indent of the options"
     (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<a>\n\t<b/>\n</a>\n"
-           (xml/emit [:a {} [:b {}]] {} {:indent "\t"}))))
+           (xml/emit [:a {} [:b {}]] {} {:indent "\t"})))
+    (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><a><b>x</b><c/></a>"
+           (xml/emit [:a {} [:b {} "x"] [:c {}]] {} {:indent false}))
+        "false for one line"))
   (testing "an option given as nil has its default"
     (is (= (xml/emit [:a {} [:b {}]])
            (xml/emit [:a {} [:b {}]] nil {:indent nil})))))

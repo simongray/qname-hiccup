@@ -126,6 +126,20 @@ that the table lacks, and under `:xml/declared` those it has, so
 that the map lacks, `xml/emit` throws. An alias mapped to nil is
 dropped, along with its elements and attributes.
 
+The table can also be a function of a URI. One that gives the URI itself
+for the namespaces it has no alias for keeps the namespace of every
+name, which suits documents whose namespaces you can't know in advance,
+such as the properties of WebDAV:
+
+```clojure
+(xml/parse "<spot xmlns=\"https://example.org/shelf\" row=\"3\"/>"
+           #(get {dc :dc} % %))
+;; => [:https://example.org/shelf/spot {:row "3"}]
+```
+
+`xml/emit` writes such a keyword namespace, which has a colon unlike any
+alias, under a prefix of its own: ns1, ns2 and so on.
+
 You can also write the Hiccup yourself, e.g. a sitemap or an Atom feed,
 as every Hiccup renderer takes it: an element can leave out its
 attribute map, as in `[:title "Emma"]`, a sequence of children is
@@ -175,9 +189,9 @@ changes:
   out, and on the JVM `xml/report` names it. In Node, xmldom reads no
   DOCTYPE, so any entity but `&amp;` and the others of XML fails.
 
-Parsing a document that isn't well-formed, or that nests deeper than the
-`:max-depth` option, throws an ex-info with the `:type`
-`:dk.simongray.qname-hiccup/malformed`.
+Parsing a document that isn't well-formed, that nests deeper than the
+`:max-depth` option or that binds a prefix to an empty namespace URI
+throws an ex-info with the `:type` `:dk.simongray.qname-hiccup/malformed`.
 
 Options
 -------
@@ -187,7 +201,8 @@ options as their last argument, which you can leave out:
 
 - `:max-depth`, how deep elements may nest, 256 by default
 - `:indent`, what each level is indented by when written, two spaces by
-  default
+  default, or false to write the document on one line, adding no white
+  space of its own
 - `:whitespace`, `:compact` to drop text of only white space, as above,
   or `:keep`
 - `:default-namespace`, an alias whose elements are written without a
