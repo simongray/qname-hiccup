@@ -64,7 +64,23 @@ For ClojureScript, shadow-cljs only reads Git dependencies from
 
 In ClojureScript, it parses XML with a DOMParser, which browsers have. In
 Node, install one as `globalThis.DOMParser`, e.g. the one from
-@xmldom/xmldom.
+@xmldom/xmldom. By default, xmldom logs an error and parses what it can,
+so give it an `onError` that throws, as a browser's DOMParser does:
+
+```clojure
+(ns my.app
+  (:require ["@xmldom/xmldom" :as xmldom]))
+
+(defn- strict-parser
+  "An xmldom DOMParser that throws on errors instead of logging them."
+  []
+  (xmldom/DOMParser.
+   #js {:onError (fn [level message _]
+                   (when-not (= level "warning")
+                     (throw (js/Error. message))))}))
+
+(set! (.-DOMParser js/globalThis) strict-parser)
+```
 
 Parse a document with a table of the namespaces you know, from URI to
 alias:
@@ -195,6 +211,9 @@ changes:
 Parsing a document that isn't well-formed, that nests deeper than the
 `:max-depth` option or that binds a prefix to an empty namespace URI
 throws an ex-info with the `:type` `:dk.simongray.qname-hiccup/malformed`.
+So does a prefix that no declaration names, in ClojureScript, since a
+DOMParser refuses it. On the JVM the element keeps its prefix, and
+`xml/report` names it.
 
 Options
 -------
@@ -255,6 +274,16 @@ Principles
 - **One codebase.** Apart from the JVM-only jsoup parser, the library is
   written in `.cljc`, and its text helpers give the same results on both
   platforms.
+
+Versions
+--------
+
+Until 1.0, a release that changes the API gets a new minor version, e.g.
+from 0.4.2 to 0.5.0, and one that only fixes gets a new patch version,
+e.g. from 0.4.2 to 0.4.3. A function that's renamed or removed goes
+without a deprecated alias, and the commit of each release says what
+changed. The tests run in CI on Java 11 and 25, in Node and in a
+headless Chrome.
 
 Development
 -----------

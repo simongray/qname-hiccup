@@ -370,6 +370,8 @@
                     (:type (ex-data e)))))
           s))
     (is (= [:rss {}] (xml/parse "<rss/>\n<!-- served in 0.2 s -->\n"))))
+  #?(:cljs (is (malformed? undeclared)
+               "a prefix that no declaration names, which the JVM reports"))
   (testing "a prefix bound to no namespace, which Namespaces in XML forbids"
     (is (malformed? "<a xmlns:b=\"\"><b:c/></a>")))
   #?(:clj
