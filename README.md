@@ -47,7 +47,7 @@ from [Clojars](https://clojars.org/dk.simongray/qname-hiccup) to the
 `:deps` in your `deps.edn`:
 
 ```clojure
-dk.simongray/qname-hiccup {:mvn/version "0.5.0"}
+dk.simongray/qname-hiccup {:mvn/version "0.6.0"}
 ```
 
 For changes that aren't released yet, use the SHA of the latest commit on
