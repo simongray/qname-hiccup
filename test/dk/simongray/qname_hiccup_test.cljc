@@ -240,7 +240,31 @@
       (is (re-find #"xmlns:ns2=\"DAV:\"" out))
       (is (re-find #"xmlns:ns3=\"http://x/\"" out))
       (is (re-find #"<ns3:a ns3:b=\"1\">v</ns3:a>" out))
-      (is (= tree (xml/parse out #(get {"urn:c" :ns1} % %))))))
+      (is (= tree (xml/parse out #(get {"urn:c" :ns1} % %)))))
+    (testing "in a declaration, where its markup is escaped"
+      (let [tree [(keyword "http://x/\"><y/><z a=\"" "a") {}]]
+        (is (= tree (xml/parse (xml/emit tree) identity))))))
+  (testing "a name that isn't an XML name is an error, so that no name adds markup"
+    (let [table {:a "urn:a" (keyword "a b") "urn:b"}]
+      (doseq [k [(keyword "http://x/" "a/></x:prop><x:remove>")
+                 (keyword "a b")
+                 (keyword "1a")
+                 (keyword "a" "b:c")
+                 (keyword "a b" "c")]]
+        (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) #"Not an XML name"
+                              (xml/emit [:rss {} [k {}]] table))
+            (str k))
+        (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) #"Not an XML name"
+                              (xml/emit [:rss {k "1"}] table))
+            (str k))))
+    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) #"Not an XML name"
+                          (xml/inner-xml [:p {} [(keyword "http://x/" "a") {}]]))
+        "nor is a URI in inner-xml, which gives it no prefix"))
+  (testing "a name beyond ASCII is written"
+    (let [tree [:é {:a·b "1" :_x.y-z "2"}]]
+      (is (= tree (xml/parse (xml/emit tree)))))
+    (is (serializer/ncname? "a𐀀") "#x10000 too, as a pair of surrogates")
+    (is (not (serializer/ncname? "a\uD800"))))
   (testing "round trip"
     (let [tree (xml/parse "<rss version=\"2.0\"><channel><title>A</title><item><guid isPermaLink=\"false\">x</guid></item></channel></rss>")]
       (is (= tree (xml/parse (xml/emit tree))))))
@@ -270,12 +294,14 @@
            "the JDK counts each reference towards its limits on entities"))))
 
 (defn malformed?
-  "Whether parsing the document `s` throws ::xml/malformed."
-  [s]
-  (= ::xml/malformed
-     (try (xml/parse s) nil
-          (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e
-            (:type (ex-data e))))))
+  "Whether parsing the document `s` with the `opts` throws ::xml/malformed."
+  ([s]
+   (malformed? s {}))
+  ([s opts]
+   (= ::xml/malformed
+      (try (xml/parse s {} opts) nil
+           (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e
+             (:type (ex-data e)))))))
 
 (defn laughs
   "A document of nested entities, each ten of the one before, down to the
@@ -308,7 +334,26 @@
        (is (malformed? (laughs "lol")))
        (is (malformed? (laughs "")) "even when they expand to nothing")
        (is (malformed? (str "<!DOCTYPE a [<!ENTITY x \"" (apply str (repeat 50000 "x")) "\">]>"
-                            "<a>" (apply str (repeat 1000 "&x;")) "</a>"))))))
+                            "<a>" (apply str (repeat 1000 "&x;")) "</a>"))))
+     (testing "with DOCTYPEs refused, nothing limits the references, since no entity can be declared"
+       (let [s (str "<a>" (apply str (repeat 10000001 "&gt;")) "</a>")]
+         (is (= 10000001 (count (xml/text (xml/parse s {} {:doctype :refuse})))))))))
+
+(deftest refusing-a-doctype
+  (let [default-laughs (str/replace (laughs "lol") "]><lolz>&lol9;</lolz>"
+                                    "<!ATTLIST lolz x CDATA \"&lol9;\">]><lolz/>")]
+    (testing "a DOCTYPE is read by default"
+      (is (= [:a {} "x"] (xml/parse "<!DOCTYPE a><a>x</a>")))
+      #?(:clj (is (malformed? default-laughs) "within the limits on entities, in a default value too")))
+    (testing "and on request, a document with one is malformed, whatever it declares"
+      (doseq [s ["<!DOCTYPE a><a>x</a>"
+                 "<?xml version=\"1.0\"?><!-- c --><?pi x?><!DOCTYPE a SYSTEM \"a.dtd\"><a/>"
+                 "<!DOCTYPE a [<!ENTITY e \"x\">]><a>&e;</a>"
+                 (laughs "lol")
+                 default-laughs]]
+        (is (malformed? s {:doctype :refuse}) s)))
+    (testing "while one without is read as ever"
+      (is (= [:a {} "x > y"] (xml/parse "<a>x &gt; y</a>" {} {:doctype :refuse}))))))
 
 (deftest malformed
   (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) #"Malformed XML"

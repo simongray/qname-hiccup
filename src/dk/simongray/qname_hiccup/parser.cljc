@@ -25,6 +25,16 @@
     (throw (malformed (str "elements nest deeper than " max-depth " levels")
                       nil))))
 
+(defn check-doctype
+  "Nil, unless the document has a DOCTYPE while DTDs aren't read, which
+  throws. The `doctype?` says whether it has one, and `dtd?` whether DTDs
+  are read."
+  [doctype? dtd?]
+  (when (and doctype? (not dtd?))
+    (throw (malformed (str "the document has a DOCTYPE, which the :doctype"
+                           " option refuses")
+                      nil))))
+
 #?(:cljs
    (defn- dom-parser
      "A DOMParser of the platform, or a throw without one."
@@ -38,14 +48,16 @@
 
 #?(:clj
    (def ^:no-doc entity-limits
-     "The JDK's limits on entities, the same on every JDK, which stop a
-     document whose entities expand into gigabytes.
+     "The JDK's limits on entities when a DTD is read, the same on every
+     JDK, which stop a document whose entities expand into gigabytes.
 
      The JDK counts each &amp; and the like towards the total, and the
-     whole document towards the size of one entity, so the total is far
-     above that of any real document, and the size of one entity is
-     unlimited. The depth of elements is checked here, the same on every
-     JDK and in JavaScript."
+     whole document towards the size of one entity, so the total also
+     stops a document with more than ten million of those, and the size
+     of one entity is unlimited. Without a DTD, no entity can be declared
+     and the text can't grow longer than the document, so no limit is set.
+     The depth of elements is checked here, the same on every JDK and in
+     JavaScript."
      {"entityExpansionLimit"      "64000"
       "totalEntitySizeLimit"      "10000000"
       "maxGeneralEntitySizeLimit" "0"
@@ -66,24 +78,28 @@
 #?(:clj
    (defn- input-factory
      "A StAX factory without namespace processing or external entities,
-     which reads the internal subset of a DTD within entity-limits."
-     ^XMLInputFactory []
+     which reads the internal subset of a DTD within entity-limits when
+     `dtd?`, or else no DTD at all, without limits."
+     ^XMLInputFactory [dtd?]
      (let [factory (XMLInputFactory/newInstance)]
        (doto factory
          ;; so that undeclared prefixes survive, and the xmlns declarations
          ;; arrive as plain attributes
          (.setProperty XMLInputFactory/IS_NAMESPACE_AWARE false)
          (.setProperty XMLInputFactory/IS_COALESCING true)
-         (.setProperty XMLInputFactory/SUPPORT_DTD true)
+         ;; when false, the JDK still scans the internal subset, but
+         ;; declares and expands none of its entities
+         (.setProperty XMLInputFactory/SUPPORT_DTD dtd?)
          (.setProperty XMLInputFactory/IS_SUPPORTING_EXTERNAL_ENTITIES false)
          (.setProperty XMLInputFactory/IS_REPLACING_ENTITY_REFERENCES true)
          (.setXMLResolver (resolver)))
-       ;; JDK 11 knows only the legacy names of the limits
+       ;; JDK 11 knows only the legacy names of the limits. A limit of 0 is
+       ;; no limit.
        (doseq [prefix        ["http://www.oracle.com/xml/jaxp/properties/"
                               "jdk.xml."]
                [limit value] entity-limits]
          (try
-           (.setProperty factory (str prefix limit) value)
+           (.setProperty factory (str prefix limit) (if dtd? value "0"))
            (catch IllegalArgumentException _)))
        factory)))
 
@@ -91,11 +107,12 @@
   "The document in `xml`, ready to read: a StAX reader at its start on the
   JVM, and the root element of a DOM in JavaScript.
 
-  On the JVM, `xml` is a string, an InputStream or a Reader, and in
-  JavaScript a string."
-  [xml]
+  On the JVM, `xml` is a string, an InputStream or a Reader, and the
+  reader reads a DTD only when `dtd?`. In JavaScript, `xml` is a string,
+  and a document with a DOCTYPE throws unless `dtd?`."
+  [xml dtd?]
   #?(:clj
-     (let [factory (input-factory)]
+     (let [factory (input-factory dtd?)]
        (cond
          (string? xml)
          (.createXMLStreamReader factory
@@ -132,7 +149,8 @@
          (throw (malformed "no root element" nil))
 
          :else
-         root))))
+         (do (check-doctype (some? (.-doctype doc)) dtd?)
+             root)))))
 
 #?(:clj
    (defn- qname
@@ -251,17 +269,19 @@
 (defn parse-raw
   "The raw Hiccup of `xml`, with elements nested no deeper than
   `max-depth`, and white space kept when `keep?`, or else only where
-  xml:space says so."
-  [xml max-depth keep?]
+  xml:space says so. Unless `dtd?`, a document with a DOCTYPE throws."
+  [xml max-depth keep? dtd?]
   #?(:clj
      (try
-       (let [^XMLStreamReader r (document xml)
+       (let [^XMLStreamReader r (document xml dtd?)
              skipped            (volatile! [])]
          (try
            (let [root (loop []
-                        (if (== (.next r) XMLStreamConstants/START_ELEMENT)
-                          (read-element r 1 max-depth keep? keep? skipped)
-                          (recur)))]
+                        (let [event (.next r)]
+                          (check-doctype (== event XMLStreamConstants/DTD) dtd?)
+                          (if (== event XMLStreamConstants/START_ELEMENT)
+                            (read-element r 1 max-depth keep? keep? skipped)
+                            (recur))))]
              ;; on to the end, where anything but a comment or white space
              ;; after the root is an error, as it is in a browser
              (while (.hasNext r)
@@ -272,4 +292,4 @@
        (catch XMLStreamException e
          (throw (malformed (.getMessage e) e))))
      :cljs
-     (read-element (document xml) 1 max-depth keep? keep? nil)))
+     (read-element (document xml dtd?) 1 max-depth keep? keep? nil)))

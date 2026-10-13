@@ -107,12 +107,17 @@
   - :whitespace, :compact to leave out text of only white space, but a
     space between two elements on one line, or :keep to keep all text, as
     XML 1.0, section 2.10, has a processor do
+  - :doctype, :read to expand the entities that a DOCTYPE declares, or
+    :refuse to treat a document with a DOCTYPE as malformed. On the JVM,
+    :refuse also lifts the limits on entities, since no document can then
+    declare one
   - :default-namespace, nil or the alias whose elements are written
     without a prefix, in the default namespace, e.g. :atom for
     <feed xmlns=\"http://www.w3.org/2005/Atom\">"
   {:max-depth         max-depth
    :indent            indent
    :whitespace        :compact
+   :doctype           :read
    :default-namespace nil})
 
 (defn- options
@@ -138,12 +143,14 @@
   On the JVM, the entities of the internal DTD subset are expanded, and an
   XHTML document has those of XHTML, but no external DTD or entity is
   read. An entity that only such a DTD could declare is left out, and
-  the :xml/report in the metadata names those in text."
+  the :xml/report in the metadata names those in text. When the :doctype
+  of `opts` is :refuse, a document with a DOCTYPE throws ::malformed
+  instead, on every platform."
   ([xml]
    (parse-raw xml {}))
   ([xml opts]
-   (let [{:keys [max-depth whitespace]} (options opts)]
-     (parser/parse-raw xml max-depth (= :keep whitespace)))))
+   (let [{:keys [max-depth whitespace doctype]} (options opts)]
+     (parser/parse-raw xml max-depth (= :keep whitespace) (= :read doctype)))))
 
 (defn- split-qname
   "The raw XML name `s` as a pair of its prefix, or nil, and its local
@@ -355,6 +362,9 @@
   has, is a namespace URI itself, e.g. that of (keyword \"DAV:\"
   \"getetag\"), and gets a prefix of its own: ns1, ns2 and so on.
 
+  An alias or a local name that isn't an XML name without a colon is an
+  error, e.g. one with a space or a <, so that no name can add markup.
+
   The tree can also be Hiccup as a renderer reads it, e.g. [:title
   \"Emma\"] without an attribute map, or with a sequence of children,
   which is spliced in."
@@ -374,7 +384,10 @@
 (defn inner-xml
   "The content of `element` as markup on one line, e.g. HTML that a
   document embeds as elements. Its text stays escaped, so an escaped tag
-  doesn't become an element."
+  doesn't become an element.
+
+  Names are checked as in emit, and a keyword namespace that's a URI
+  throws too, since there's no root element to declare it on."
   [element]
   (serializer/inner-xml element))
 

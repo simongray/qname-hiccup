@@ -20,7 +20,8 @@ alias, whatever prefix the document wrote.
   so writing the tree back declares it again.
 - **Safe on untrusted input.** On the JVM, no external DTD or entity is
   read, so XXE attacks don't work, and entities can't expand into
-  gigabytes. On every platform, nesting has a depth limit.
+  gigabytes. On every platform, nesting has a depth limit, and you can
+  refuse any DOCTYPE. When writing, a name with markup in it is an error.
 - **Bytes read as a browser reads them.** The encoding comes from the
   byte order mark, then from a charset you give, e.g. that of a
   Content-Type header, and then from the XML declaration. A label means
@@ -123,8 +124,10 @@ to its URI. It declares those namespaces on the root element:
 Without the map, it uses the namespaces in the tree's metadata: those
 that the table lacks, and under `:xml/declared` those it has, so
 `(xml/emit book)` writes the same document. If the tree uses an alias
-that the map lacks, `xml/emit` throws. An alias mapped to nil is
-dropped, along with its elements and attributes.
+that the map lacks, `xml/emit` throws. It also throws for a name that
+isn't an XML name, e.g. one with a space or a `<`, so that a name from
+untrusted input can't add markup. An alias mapped to nil is dropped,
+along with its elements and attributes.
 
 The table can also be a function of a URI. One that gives the URI itself
 for the namespaces it has no alias for keeps the namespace of every
@@ -205,6 +208,11 @@ options as their last argument, which you can leave out:
   space of its own
 - `:whitespace`, `:compact` to drop text of only white space, as above,
   or `:keep`
+- `:doctype`, `:read` to expand the entities of a DOCTYPE, as above, or
+  `:refuse` to treat a document with a DOCTYPE as malformed, e.g. for
+  untrusted input that needs no DTD. On the JVM, `:refuse` also lifts
+  the limits on entities, which otherwise stop a document with more than
+  ten million references such as `&gt;`.
 - `:default-namespace`, an alias whose elements are written without a
   prefix, in the default namespace, e.g. `:atom` for
   `<feed xmlns="http://www.w3.org/2005/Atom">`

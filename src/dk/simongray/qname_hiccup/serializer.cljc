@@ -60,6 +60,66 @@
     (str ns ":" (name k))
     (name k)))
 
+;; XML 1.0, section 2.3: NameStartChar and NameChar
+(defn- name-char?
+  "Whether the character code `c`, from #x80 up, can be in an XML name, or
+  start one when `start?`."
+  [^long c start?]
+  (or (and (>= c 0xC0) (<= c 0x2FF) (not= c 0xD7) (not= c 0xF7))
+      (and (>= c 0x370) (<= c 0x1FFF) (not= c 0x37E))
+      (and (>= c 0x200C) (<= c 0x200D))
+      (and (>= c 0x2070) (<= c 0x218F))
+      (and (>= c 0x2C00) (<= c 0x2FEF))
+      (and (>= c 0x3001) (<= c 0xD7FF))
+      (and (>= c 0xF900) (<= c 0xFDCF))
+      (and (>= c 0xFDF0) (<= c 0xFFFD))
+      (and (not start?)
+           (or (== c 0xB7)
+               (and (>= c 0x300) (<= c 0x36F))
+               (and (>= c 0x203F) (<= c 0x2040))))))
+
+;; Namespaces in XML 1.0, section 3: a prefix and a local name are each an
+;; NCName, an XML name without a colon
+(defn ncname?
+  "Whether the string `s` is an NCName, an XML name without a colon."
+  [^String s]
+  (let [n (count s)]
+    (loop [i 0]
+      (if (== i n)
+        (pos? n)
+        (let [c #?(:clj (int (.charAt s i)) :cljs (.charCodeAt s i))]
+          (cond
+            ;; nearly every name is ASCII, so it's checked here without a
+            ;; call: a letter or _, and after the first a digit, - or . too
+            (if (< c 0x80)
+              (or (and (>= c 97) (<= c 122))
+                  (and (>= c 65) (<= c 90))
+                  (== c 95)
+                  (and (> i 0)
+                       (or (and (>= c 48) (<= c 57)) (== c 45) (== c 46))))
+              (name-char? c (== i 0)))
+            (recur (inc i))
+
+            ;; #x10000-#xEFFFF, as a pair of surrogates
+            (and (>= c 0xD800) (<= c 0xDB7F) (< (inc i) n)
+                 (let [d #?(:clj  (int (.charAt s (inc i)))
+                            :cljs (.charCodeAt s (inc i)))]
+                   (and (>= d 0xDC00) (<= d 0xDFFF))))
+            (recur (+ i 2))
+
+            :else
+            false))))))
+
+(defn- xml-name
+  "The XML name of the keyword `k`, as qname has it. A prefix or a local
+  name that isn't an NCName throws, so that no name can add markup."
+  [k]
+  (let [ns (namespace k)]
+    (if (and (ncname? (name k))
+             (or (nil? ns) (ncname? ns)))
+      (qname k)
+      (throw (ex-info "Not an XML name" {:name k})))))
+
 (defn- buffer
   "An empty buffer of text."
   []
@@ -118,7 +178,7 @@
   (reduce-kv (fn [buf k v]
                (-> buf
                    (add " ")
-                   (add (qname k))
+                   (add (xml-name k))
                    (add "=\"")
                    (add-escaped (str v) :attr)
                    (add "\"")))
@@ -149,7 +209,7 @@
   "The buffer `buf` with `element` added on one line, its text by
   `add-fn`, a function of the buffer and a string."
   [buf element add-fn]
-  (let [name (qname (nth element 0))
+  (let [name (xml-name (nth element 0))
         buf  (add-start-tag buf element name)]
     (if (== 2 (count element))
       (add buf "/>")
@@ -182,7 +242,7 @@
       ;; indentation would join the text of mixed content, and grow it on
       ;; every round trip
       (add-compact (add buf indent) element add-text)
-      (let [name (qname (nth element 0))
+      (let [name (xml-name (nth element 0))
             buf  (add-start-tag (add buf indent) element name)]
         (case content
           :none
