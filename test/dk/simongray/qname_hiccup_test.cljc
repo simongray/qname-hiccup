@@ -243,7 +243,11 @@
       (is (= tree (xml/parse out #(get {"urn:c" :ns1} % %)))))
     (testing "in a declaration, where its markup is escaped"
       (let [tree [(keyword "http://x/\"><y/><z a=\"" "a") {}]]
-        (is (= tree (xml/parse (xml/emit tree) identity))))))
+        (is (str/includes? (xml/emit tree)
+                           "<ns1:a xmlns:ns1=\"http://x/&quot;&gt;&lt;y/&gt;&lt;z a=&quot;\"/>"))
+        ;; the DOMParser of some browsers refuses a namespace name that
+        ;; isn't a URI
+        #?(:clj (is (= tree (xml/parse (xml/emit tree) identity)))))))
   (testing "a name that isn't an XML name is an error, so that no name adds markup"
     (let [table {:a "urn:a" (keyword "a b") "urn:b"}]
       (doseq [k [(keyword "http://x/" "a/></x:prop><x:remove>")
