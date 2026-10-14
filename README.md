@@ -42,25 +42,17 @@ results on each.
 Getting started
 ---------------
 
-It requires Clojure 1.11+ and Java 11+. For the latest release, add it
-from [Clojars](https://clojars.org/dk.simongray/qname-hiccup) to the
-`:deps` in your `deps.edn`:
+It requires Clojure 1.11+ and Java 11+. Add it from
+[Clojars](https://clojars.org/dk.simongray/qname-hiccup) to the `:deps`
+in your `deps.edn`:
 
 ```clojure
 dk.simongray/qname-hiccup {:mvn/version "0.6.0"}
 ```
 
-For changes that aren't released yet, use the SHA of the latest commit on
-`master` instead:
-
-```clojure
-dk.simongray/qname-hiccup
-{:git/url "https://github.com/simongray/qname-hiccup"
- :git/sha "…"}
-```
-
-For ClojureScript, shadow-cljs only reads Git dependencies from
-`deps.edn`, so also set `:deps true` in your `shadow-cljs.edn`.
+For unreleased changes, depend on the latest commit on `master` instead.
+In shadow-cljs, a Git dependency only works through `deps.edn`, so set
+`:deps true` in your `shadow-cljs.edn` too.
 
 In ClojureScript, it parses XML with a DOMParser, which browsers have. In
 Node, install one as `globalThis.DOMParser`, e.g. the one from
@@ -81,6 +73,9 @@ so give it an `onError` that throws, as a browser's DOMParser does:
 
 (set! (.-DOMParser js/globalThis) strict-parser)
 ```
+
+Parsing and writing
+-------------------
 
 Parse a document with a table of the namespaces you know, from URI to
 alias:
@@ -274,16 +269,6 @@ Principles
 - **One codebase.** Apart from the JVM-only jsoup parser, the library is
   written in `.cljc`, and its text helpers give the same results on both
   platforms.
-
-Versions
---------
-
-Until 1.0, a release that changes the API gets a new minor version, e.g.
-from 0.4.2 to 0.5.0, and one that only fixes gets a new patch version,
-e.g. from 0.4.2 to 0.4.3. A function that's renamed or removed goes
-without a deprecated alias, and the commit of each release says what
-changed. The tests run in CI on Java 11 and 25, in Node and in a
-headless Chrome.
 
 Development
 -----------
