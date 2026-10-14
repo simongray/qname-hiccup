@@ -74,8 +74,8 @@ so give it an `onError` that throws, as a browser's DOMParser does:
 (set! (.-DOMParser js/globalThis) strict-parser)
 ```
 
-Parsing and writing
--------------------
+Parsing
+-------
 
 Parse a document with a table of the namespaces you know, from URI to
 alias:
@@ -110,17 +110,30 @@ prefix, and the tree's metadata records its URI:
 ;; => {:shelf "https://example.org/shelf"}
 ```
 
-A default namespace is looked up in the table too, so element names
-without a prefix come out under its alias. If the table lacks it, the
-names stay plain keywords, and the declaration stays on its element as
-the attribute `:xmlns`, so it's written back where it was.
+A default namespace is looked up in the table too, so the names without
+a prefix come out under its alias. When the table lacks it, the names
+stay plain keywords, and the declaration stays on its element as the
+attribute `:xmlns`, so that it's written back where it was.
 
 The metadata also holds a report of what the parse found, e.g. the
-unknown shelf namespace or a prefix that no declaration names. Get it
+unknown shelf namespace, or a prefix that no declaration names. Get it
 with `xml/report`.
 
-To write the tree back, give `xml/emit` a map of each alias in the tree
-to its URI. It declares those namespaces on the root element:
+To parse bytes, e.g. the body of a response, turn them into text with
+`xml/decode` first. Give it the charset of the Content-Type header, if
+there is one, and it finds the encoding as a browser does.
+
+Parsing is two steps, which you can also take yourself. The first,
+`xml/parse-raw`, gives Hiccup with the names as they're written, as
+strings. The second, `xml/resolve-namespaces`, resolves those names by
+your table, and also takes the raw Hiccup of another parser, e.g. the
+lenient one [below](#lenient-parsing).
+
+Writing
+-------
+
+To write a tree back, give `xml/emit` a map of each alias in the tree to
+its URI. It declares those namespaces on the root element:
 
 ```clojure
 (println (xml/emit book (assoc (xml/namespaces book) :dc dc)))
@@ -132,18 +145,29 @@ to its URI. It declares those namespaces on the root element:
 ;; </book>
 ```
 
-Without the map, it uses the namespaces in the tree's metadata: those
-that the table lacks, and under `:xml/declared` those it has, so
-`(xml/emit book)` writes the same document. If the tree uses an alias
-that the map lacks, `xml/emit` throws. It also throws for a name that
-isn't an XML name, e.g. one with a space or a `<`, so that a name from
-untrusted input can't add markup. An alias mapped to nil is dropped,
-along with its elements and attributes.
+Without the map, it takes the namespaces that the parse recorded in the
+tree's metadata, so `(xml/emit book)` writes the same document. An alias
+that the map gives as nil is left out, with its elements and attributes.
+
+It throws when the tree uses an alias that the map lacks, and for a name
+that isn't an XML name, e.g. one with a space or a `<`, so that a name
+from untrusted input can't add markup.
+
+You can also write the Hiccup yourself, e.g. a sitemap or an Atom feed.
+It's read as every Hiccup renderer reads it:
+
+- an element can leave out its attribute map, as in `[:title "Emma"]`
+- a sequence of children is spliced in
+- nil is left out
+- a number is written as its text
+
+Every namespace
+---------------
 
 The table can also be a function of a URI. One that gives the URI itself
-for the namespaces it has no alias for keeps the namespace of every
-name, which suits documents whose namespaces you can't know in advance,
-such as the properties of WebDAV:
+when it has no alias keeps the namespace of every name, which suits
+documents whose namespaces you can't know in advance, e.g. the
+properties of WebDAV:
 
 ```clojure
 (xml/parse "<spot xmlns=\"https://example.org/shelf\" row=\"3\"/>"
@@ -151,39 +175,34 @@ such as the properties of WebDAV:
 ;; => [:https://example.org/shelf/spot {:row "3"}]
 ```
 
-`xml/emit` writes such a keyword namespace, which has a colon unlike any
-alias, under a prefix of its own: ns1, ns2 and so on.
-
-You can also write the Hiccup yourself, e.g. a sitemap or an Atom feed,
-as every Hiccup renderer takes it: an element can leave out its
-attribute map, as in `[:title "Emma"]`, a sequence of children is
-spliced in, nil is left out, and a number is written as its text.
+Unlike an alias, such a keyword namespace has a colon in it, and
+`xml/emit` writes it under a prefix of its own: ns1, ns2 and so on.
 
 Reading a tree
 --------------
 
-The functions `xml/tag`, `xml/attrs`, `xml/children`, `xml/elements`,
-`xml/element`, `xml/text` and `xml/deep-text` read the Hiccup, e.g.:
+These functions read the Hiccup of a tree:
+
+| Function | Gives |
+|---|---|
+| `xml/tag`, `xml/attrs`, `xml/children` | The parts of an element |
+| `xml/element` | Its first child with a tag |
+| `xml/elements` | Its element children, or only those with a tag |
+| `xml/element-in`, `xml/elements-in` | The same along a path of tags, e.g. `[:channel :item]` |
+| `xml/text` | The text directly in an element |
+| `xml/deep-text` | All the text in an element and its descendants |
 
 ```clojure
 (xml/text (xml/element book :dc/creator))
 ;; => "Jane Austen"
 ```
 
-To go down more than one level, give `xml/element-in` or
-`xml/elements-in` a path of tags, e.g. `[:channel :item]` for the items
-of an RSS feed.
+Text isn't trimmed. To trim it the same way on every platform, use
+`xml/trim`, which removes no-break spaces too, like JavaScript's trim and
+unlike Java's.
 
-Text isn't trimmed. Use `xml/trim` to trim it the same way on every
-platform: like JavaScript's trim, and unlike Java's, it removes no-break
-spaces too.
-
-For more control, parse in two steps: `xml/parse-raw` gives Hiccup with
-the names as written, as strings, and `xml/resolve-namespaces` resolves
-them, which also works on the raw Hiccup of another parser. Use
-`xml/decode` to turn the bytes of a document into text, and
-`xml/inner-xml` to write the content of an element as markup, e.g. HTML
-that a document embeds as XML.
+To write the content of an element as markup, e.g. HTML that a document
+embeds as XML, use `xml/inner-xml`.
 
 What a tree keeps
 -----------------
@@ -200,15 +219,18 @@ changes:
 - The entities of the DOCTYPE are expanded: those it declares itself,
   and in an XHTML document those of XHTML, as a browser does. No
   external DTD is read, so an entity that only one could declare is left
-  out, and on the JVM `xml/report` names it. In Node, xmldom reads no
+  out, and on the JVM the report names it. In Node, xmldom reads no
   DOCTYPE, so any entity but `&amp;` and the others of XML fails.
 
-Parsing a document that isn't well-formed, that nests deeper than the
-`:max-depth` option or that binds a prefix to an empty namespace URI
-throws an ex-info with the `:type` `:dk.simongray.qname-hiccup/malformed`.
-So does a prefix that no declaration names, in ClojureScript, since a
-DOMParser refuses it. On the JVM the element keeps its prefix, and
-`xml/report` names it.
+A document is malformed, and parsing it throws an ex-info with the
+`:type` `:dk.simongray.qname-hiccup/malformed`, when:
+
+- it isn't well-formed
+- it nests deeper than the `:max-depth` option
+- it binds a prefix to an empty namespace URI
+- in ClojureScript, it uses a prefix that no declaration names, which a
+  DOMParser refuses. On the JVM the element keeps its prefix, and the
+  report names it.
 
 Options
 -------
