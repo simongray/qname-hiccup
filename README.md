@@ -47,7 +47,7 @@ It requires Clojure 1.11+ and Java 11+. Add it from
 in your `deps.edn`:
 
 ```clojure
-dk.simongray/qname-hiccup {:mvn/version "0.6.0"}
+dk.simongray/qname-hiccup {:mvn/version "0.6.1"}
 ```
 
 For unreleased changes, depend on the latest commit on `master` instead.
