@@ -58,7 +58,7 @@
       s
       (subs s start end))))
 
-(defn- kept-run
+(defn kept-run
   "The transient `acc` with the run of text `run` added, unless it's empty,
   or blank without `keep?`. A blank run is kept when it's `between?` two
   elements on one line."

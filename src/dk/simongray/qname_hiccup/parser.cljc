@@ -185,55 +185,78 @@
                                   (.getNamespaceURI r (int i))]))
                           (range n-decls))))])
      :cljs (let [attrs (.-attributes source)
-                 attr  (fn [i]
+                 n     (.-length attrs)
+                 add   (fn [m i]
                          (let [a (.item attrs i)]
-                           [(.-nodeName a) (.-nodeValue a)]))]
+                           (assoc! m (.-nodeName a) (.-nodeValue a))))]
              [(.-nodeName source)
-              (into {} (map attr) (range (.-length attrs)))])))
+              ;; most elements have none
+              (if (zero? n)
+                {}
+                (persistent! (reduce add (transient {}) (range n))))])))
 
 (declare read-element)
 
+;; The text is merged as it's read, into the element's own vector, since a
+;; vector of the children and then another of their merged text took twice
+;; as long in a browser
 (defn- read-children
-  "The raw elements and text in the element at `source`, which nest at
-  `depth`, no deeper than `max-depth`, with white space kept as `keep?`
-  and `default?` say to keep-space?, and the names of skipped entities
-  added to the volatile `skipped`. On the JVM, this reads the StAX reader
-  up to the end tag."
-  [source depth max-depth default? keep? skipped]
+  "The transient `acc` with the raw elements and text in the element at
+  `source` added, which nest at `depth`, no deeper than `max-depth`.
+
+  Adjacent text is merged, and white space kept as `keep?` says to
+  kept-run and `default?` says to keep-space?. The names of skipped
+  entities are added to the volatile `skipped`. On the JVM, this reads the
+  StAX reader up to the end tag."
+  [acc source depth max-depth default? keep? skipped]
   #?(:clj  (let [^XMLStreamReader r source]
-             (loop [acc (transient [])]
+             (loop [acc acc run nil after-element? false]
                (let [event (.next r)]
                  (cond
                    (== event XMLStreamConstants/START_ELEMENT)
-                   (recur (conj! acc (read-element r depth max-depth default?
-                                                   keep? skipped)))
+                   (recur (conj! (whitespace/kept-run acc run after-element?
+                                                      keep?)
+                                 (read-element r depth max-depth default?
+                                               keep? skipped))
+                          nil
+                          true)
 
                    (or (== event XMLStreamConstants/CHARACTERS)
                        (== event XMLStreamConstants/CDATA)
                        (== event XMLStreamConstants/SPACE))
-                   (recur (conj! acc (.getText r)))
+                   (let [s (.getText r)]
+                     (recur acc (if run (str run s) s) after-element?))
 
                    (== event XMLStreamConstants/END_ELEMENT)
-                   (persistent! acc)
+                   (whitespace/kept-run acc run false keep?)
 
                    ;; XML 1.0, section 4.1, VC Entity Declared: an entity
                    ;; that only the external DTD can declare, which is
                    ;; never read, is skipped, as a browser skips it
                    (== event XMLStreamConstants/ENTITY_REFERENCE)
                    (do (vswap! skipped conj (.getLocalName r))
-                       (recur acc))
+                       (recur acc run after-element?))
 
                    :else
-                   (recur acc)))))
-     :cljs (let [nodes (.-childNodes source)
-                 child (fn [i]
-                         (let [node (.item nodes i)]
-                           (case (.-nodeType node)
-                             1     (read-element node depth max-depth default?
-                                                 keep? skipped)
-                             (3 4) (.-nodeValue node)
-                             nil)))]
-             (into [] (keep child) (range (.-length nodes))))))
+                   (recur acc run after-element?)))))
+     :cljs (loop [node           (.-firstChild source)
+                  acc            acc
+                  run            nil
+                  after-element? false]
+             (if (nil? node)
+               (whitespace/kept-run acc run false keep?)
+               (case (.-nodeType node)
+                 1     (recur (.-nextSibling node)
+                              (conj! (whitespace/kept-run acc run after-element?
+                                                          keep?)
+                                     (read-element node depth max-depth
+                                                   default? keep? skipped))
+                              nil
+                              true)
+                 (3 4) (let [s (.-nodeValue node)]
+                         (recur (.-nextSibling node) acc
+                                (if run (str run s) s) after-element?))
+                 (recur (.-nextSibling node) acc run after-element?))))))
 
 (defn- read-element
   "The raw Hiccup of the element at `source`, which nests at `depth`, 1 for
@@ -244,14 +267,10 @@
   [source depth max-depth default? inherited? skipped]
   (check-depth depth max-depth)
   (let [[_ attrs :as head] (start-tag source)
-        keep?              (whitespace/keep-space? attrs inherited? default?)
-        ;; the start tag first: on the JVM, reading the children moves
-        ;; past it
-        children           (read-children source (inc depth) max-depth
-                                          default? keep? skipped)]
-    (into head (if keep?
-                 (whitespace/joined-text children)
-                 (whitespace/compact-text children)))))
+        keep?              (whitespace/keep-space? attrs inherited? default?)]
+    ;; the start tag first: on the JVM, reading the children moves past it
+    (persistent! (read-children (transient head) source (inc depth) max-depth
+                                default? keep? skipped))))
 
 #?(:clj
    (defn- with-skipped

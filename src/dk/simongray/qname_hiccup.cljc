@@ -50,7 +50,15 @@
 (defn element
   "The first child of `element` tagged `tag`."
   [element tag]
-  (first (elements element tag)))
+  ;; a walk of the vector rather than the lazy seqs of elements, since a
+  ;; reader of a document may look in every element of a kind
+  (let [n (count element)]
+    (loop [i 1]
+      (when (< i n)
+        (let [x (nth element i)]
+          (if (and (vector? x) (= tag (nth x 0)))
+            x
+            (recur (inc i))))))))
 
 (defn elements-in
   "The descendants of `element` along the path of `tags`, a tag for each
@@ -239,11 +247,29 @@
       (keyword (name alias) s)
       (resolve-name scope problems s))))
 
+(defn- name-caches
+  "Empty caches of the names resolved in a scope, by their raw names, with
+  element names apart from attribute names, since the default namespace
+  applies to element names alone."
+  []
+  {:tags (volatile! {}) :attrs (volatile! {})})
+
+(defn- resolve-once
+  "The raw name `s` resolved in `scope` by `f`, resolve-tag or
+  resolve-name, from the volatile `cache` of that scope when it's there,
+  and else kept in it. Problems are added to the volatile `problems`."
+  [f cache scope problems s]
+  (or (get @cache s)
+      (let [k (f scope problems s)]
+        (vswap! cache assoc s k)
+        k)))
+
 (defn- resolve-attrs
-  "The raw `attrs` with their names resolved in `scope`, and without the
-  xmlns declarations but that of a default namespace without an alias,
-  which stays as :xmlns. Problems are added to the volatile `problems`."
-  [scope problems attrs]
+  "The raw `attrs` with their names resolved in `scope` by the volatile
+  `cache` of that scope, and without the xmlns declarations but that of a
+  default namespace without an alias, which stays as :xmlns. Problems are
+  added to the volatile `problems`."
+  [scope problems cache attrs]
   (if (zero? (count attrs))
     {}
     (let [[_ default-alias] (get scope nil)]
@@ -257,22 +283,30 @@
                       m
 
                       :else
-                      (assoc! m (resolve-name scope problems k) v)))
+                      (assoc! m (resolve-once resolve-name cache scope problems
+                                              k)
+                              v)))
                   (transient {})
                   attrs)))))
 
 ;; Namespaces in XML 1.0, section 6.1
 (defn- resolve-element
   "The raw Hiccup `element` resolved by `uri->alias` in `scope`, which holds
-  the declarations of its ancestors. Problems are added to the volatile
-  `problems`, and the namespaces with an alias to the volatile `declared`."
-  [uri->alias problems declared scope [tag attrs & children]]
-  (let [scope (in-scope uri->alias problems declared scope attrs)]
-    (into [(resolve-tag scope problems tag)
-           (resolve-attrs scope problems attrs)]
+  the declarations of its ancestors, with the `names` of name-caches
+  already resolved in it. Problems are added to the volatile `problems`,
+  and the namespaces with an alias to the volatile `declared`."
+  [uri->alias problems declared scope names [tag attrs & children]]
+  (let [scope' (in-scope uri->alias problems declared scope attrs)
+        ;; each name resolves once in a scope, so its problems are added at
+        ;; its first use, and the report, which has each problem once, stays
+        ;; the same
+        names  (if (identical? scope' scope) names (name-caches))]
+    (into [(resolve-once resolve-tag (:tags names) scope' problems tag)
+           (resolve-attrs scope' problems (:attrs names) attrs)]
           (map #(if (string? %)
                   %
-                  (resolve-element uri->alias problems declared scope %)))
+                  (resolve-element uri->alias problems declared scope' names
+                                   %)))
           children)))
 
 (defn resolve-namespaces
@@ -299,7 +333,8 @@
   [tree uri->alias]
   (let [found     (volatile! (vec (:xml/report (meta tree))))
         declared  (volatile! {})
-        tree'     (resolve-element uri->alias found declared {} tree)
+        tree'     (resolve-element uri->alias found declared {} (name-caches)
+                                   tree)
         problems  (distinct @found)
         by-prefix (fn [id]
                     (into {}
